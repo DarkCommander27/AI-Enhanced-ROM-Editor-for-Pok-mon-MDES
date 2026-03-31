@@ -15,6 +15,9 @@ A cross-platform (Windows & Linux) ROM editing tool for **Pokémon Mystery Dunge
 | 🐾 **Pokémon Stats Editor** | Edit base HP, Attack, Sp. Atk, Defense, Sp. Def, Speed, types, abilities, EXP group |
 | ⚔️ **Move Editor** | Edit move type, category, base power, accuracy, PP, target, range |
 | 🏰 **Dungeon Editor** | Edit floor count, weather, darkness, item density, trap density, Kecleon shop chance, and more |
+| 📘 **Learnset Editor (Experimental)** | Edit WAZA pointer-table level-up learnsets with size-safe writing |
+| 📝 **Text (Raw) Editor** | Edit text-like ROM files (e.g. `/MESSAGE/*`) in size-preserving safe mode |
+| ✅ **Validation Warnings** | Detect suspicious values (very high BST/power, invalid ranges, extreme floor counts) before saving |
 | 🤖 **AI Suggestions** | Get balance recommendations powered by OpenAI (requires API key) or a built-in rule-based engine |
 | 🔍 **Search** | Quickly find any Pokémon, move, or dungeon by name |
 
@@ -75,6 +78,23 @@ python main.py
 - Edit floor count, weather, darkness, and spawn/item parameters
 - Click **Apply Changes**
 
+### Editing Learnsets (Experimental)
+
+- Open the **Learnsets (Exp)** tab
+- Select a Pokémon and edit lines as `move_id,level`
+- Click **Apply Learnset**
+- Optional: enable **Auto-fit repack on save** to allow encoded list sizes to change
+- Save is size-safe: if encoded learnset byte sizes would change, the write is rejected and original data is restored
+- With auto-fit enabled, the editor repacks learnset segments and rewrites pointer-table offsets
+- If repacked data would overflow the available region, save is rejected and original data is restored
+
+### Editing Text (Raw Mode)
+
+- Open the **Text (Raw)** tab
+- Select a text-like file from the left list (supports search)
+- Edit content and click **Apply to File**
+- Safe mode keeps the file byte size unchanged (shorter text is zero-padded; longer text is rejected)
+
 ### AI Suggestions
 
 Each editor tab has an **AI panel** on the right:
@@ -98,6 +118,12 @@ for obvious balance issues (e.g. HP > 200, power > 200, too many floors).
 
 - **File → Save ROM** (`Ctrl+S`) — overwrites the original file
 - **File → Save ROM As…** (`Ctrl+Shift+S`) — saves to a new path
+
+### Validation Warnings
+
+- Open the **Validation** tab to review warnings across Pokémon, moves, and dungeons
+- Click **Refresh Warnings** after major edits
+- Use it as a safety pass before saving your ROM
 
 ---
 
@@ -141,6 +167,45 @@ tests/
 pip install pytest
 python -m pytest tests/ -v
 ```
+
+---
+
+## Build Windows EXE
+
+You can package this app for Windows with PyInstaller.
+
+### Local build on Windows
+
+From the repository root in PowerShell:
+
+```powershell
+./scripts/build_windows.ps1
+```
+
+Or from Command Prompt:
+
+```bat
+scripts\build_windows.bat
+```
+
+Output:
+
+- `dist/MDES-ROM-Editor.exe`
+
+Build polish included by default:
+
+- Windows version metadata from `scripts/windows_version_info.txt`
+- Optional app icon from `assets/app.ico` (if present)
+
+If you want a custom icon, create `assets/app.ico` before running the build script.
+
+### Build on GitHub Actions
+
+A workflow is included at `.github/workflows/build-windows-exe.yml`.
+
+1. Open **Actions** in GitHub
+2. Run workflow **Build Windows EXE**
+3. Download artifact `MDES-ROM-Editor-windows`
 
 ---
 

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
+import datetime
+import json
 import os
 import sys
 import tkinter as tk
+from copy import deepcopy
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 from typing import Optional
@@ -13,19 +17,25 @@ from rom_editor.nds.rom import NDSRom
 from rom_editor.nds.narc import NARC
 from rom_editor.games.explorers_sky.constants import (
     GAME_CODES, POKEMON_DATA_NARC, MOVE_DATA_NARC, DUNGEON_DATA_NARC,
+    PORTRAIT_DATA, MOVE_LEARNSET_NARC,
 )
 from rom_editor.games.explorers_sky.pokemon import PokemonTable
 from rom_editor.games.explorers_sky.moves import MoveTable
 from rom_editor.games.explorers_sky.dungeons import DungeonTable
+from rom_editor.games.explorers_sky.learnsets import WazaLearnsetTable
 from rom_editor.ai.assistant import AIAssistant
 from rom_editor.ui.editors.pokemon_editor import PokemonEditorTab
 from rom_editor.ui.editors.move_editor import MoveEditorTab
 from rom_editor.ui.editors.dungeon_editor import DungeonEditorTab
 from rom_editor.ui.editors.ai_panel import AIPanel
+from rom_editor.ui.editors.text_editor import TextEditorTab
+from rom_editor.ui.editors.learnset_editor import LearnsetEditorTab
+from rom_editor.ui.history import ChangeHistory, ChangeRecord
 
 
 APP_TITLE = "AI-Enhanced ROM Editor — Pokémon Mystery Dungeon: Explorers of Sky"
 WINDOW_SIZE = "1100x700"
+SETTINGS_FILE = Path.home() / ".ai_enhanced_rom_editor_settings.json"
 
 
 class ROMEditorApp(tk.Tk):
@@ -48,19 +58,59 @@ class ROMEditorApp(tk.Tk):
         self._pokemon_table: Optional[PokemonTable] = None
         self._move_table: Optional[MoveTable] = None
         self._dungeon_table: Optional[DungeonTable] = None
+        self._learnset_table: Optional[WazaLearnsetTable] = None
         self._assistant = AIAssistant()
         self._modified = False
+        self._autosave_job: Optional[str] = None
+        self._history = ChangeHistory(max_size=50)
+        self._history.set_on_change(self._on_history_changed)
+        self._settings = self._load_settings()
+        self._simple_mode = tk.BooleanVar(value=False)
+        self._focus_assist = tk.BooleanVar(value=False)
+        self._neuro_mode = tk.BooleanVar(
+            value=self._get_setting_bool("neuro_mode", default=True)
+        )
+        self._portrait_container = None
 
         self._build_menu()
         self._build_toolbar()
-        self._build_notebook()
+        self._build_guidance_bar()
         self._build_statusbar()
+        self._build_changes_panel()
+        self._build_notebook()
+
+        # Start in a calmer layout by default.
+        self._apply_neuro_mode(initial=True)
 
         self._update_ui_state()
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
+
+    def _load_settings(self) -> dict:
+        if not SETTINGS_FILE.exists():
+            return {}
+        try:
+            with SETTINGS_FILE.open("r", encoding="utf-8") as fh:
+                raw = json.load(fh)
+            if isinstance(raw, dict):
+                return raw
+        except Exception:
+            pass
+        return {}
+
+    def _save_settings(self) -> None:
+        try:
+            with SETTINGS_FILE.open("w", encoding="utf-8") as fh:
+                json.dump(self._settings, fh, indent=2)
+        except Exception:
+            # Failing to save preferences should never block editing.
+            self._status("Warning: Could not save editor preferences.")
+
+    def _get_setting_bool(self, key: str, default: bool) -> bool:
+        value = self._settings.get(key, default)
+        return value if isinstance(value, bool) else default
 
     def _build_menu(self) -> None:
         menubar = tk.Menu(self)
@@ -81,10 +131,19 @@ class ROMEditorApp(tk.Tk):
         self.bind("<Control-S>", lambda _e: self._save_rom_as())
 
         # Edit menu
-        edit_menu = tk.Menu(menubar, tearoff=False)
-        edit_menu.add_command(label="Reload from ROM",
-                              command=self._reload_from_rom)
-        menubar.add_cascade(label="Edit", menu=edit_menu)
+        self._edit_menu = tk.Menu(menubar, tearoff=False)
+        self._edit_menu.add_command(
+            label="Undo", accelerator="Ctrl+Z",
+            command=self._undo, state="disabled")
+        self._edit_menu.add_command(
+            label="Redo", accelerator="Ctrl+Y",
+            command=self._redo, state="disabled")
+        self._edit_menu.add_separator()
+        self._edit_menu.add_command(label="Reload from ROM",
+                                    command=self._reload_from_rom)
+        menubar.add_cascade(label="Edit", menu=self._edit_menu)
+        self.bind("<Control-z>", lambda _e: self._undo())
+        self.bind("<Control-y>", lambda _e: self._redo())
 
         # Help menu
         help_menu = tk.Menu(menubar, tearoff=False)
@@ -104,83 +163,120 @@ class ROMEditorApp(tk.Tk):
         ttk.Button(bar, text="Save ROM", command=self._save_rom).pack(
             side="left", padx=2, pady=2)
 
+        self._mode_btn = ttk.Button(
+            bar, text="Simple Mode", command=self._toggle_mode, width=14)
+        self._mode_btn.pack(side="left", padx=(8, 2), pady=2)
+
+        self._neuro_btn = ttk.Button(
+            bar, text="Neuro Mode: On", command=self._toggle_neuro_mode, width=14)
+        self._neuro_btn.pack(side="left", padx=(4, 2), pady=2)
+
+        self._focus_btn = ttk.Button(
+            bar, text="Focus Assist: Off", command=self._toggle_focus_assist, width=16)
+        self._focus_btn.pack(side="left", padx=(4, 2), pady=2)
+
         self._rom_label = ttk.Label(bar, text="No ROM loaded", foreground="grey")
         self._rom_label.pack(side="left", padx=12)
+
+    def _build_guidance_bar(self) -> None:
+        """A low-pressure, step-by-step hint bar for the current workflow."""
+        bar = ttk.Frame(self, relief="ridge")
+        bar.pack(side="top", fill="x")
+        self._guide_var = tk.StringVar()
+        ttk.Label(
+            bar,
+            textvariable=self._guide_var,
+            anchor="w",
+            foreground="#1f4f7a",
+        ).pack(side="left", padx=8, pady=3)
+        self._update_guidance()
 
     def _build_notebook(self) -> None:
         self._notebook = ttk.Notebook(self)
         self._notebook.pack(fill="both", expand=True, padx=4, pady=4)
 
-        # Pokemon tab
-        pokemon_outer = ttk.Frame(self._notebook)
-        pokemon_outer.pack(fill="both", expand=True)
-        pokemon_outer.columnconfigure(0, weight=3)
-        pokemon_outer.columnconfigure(1, weight=1)
-        pokemon_outer.rowconfigure(0, weight=1)
+        # Pokémon tab
+        self._pokemon_outer = ttk.Frame(self._notebook)
+        self._pokemon_outer.pack(fill="both", expand=True)
+        self._pokemon_outer.columnconfigure(0, weight=3)
+        self._pokemon_outer.columnconfigure(1, weight=1)
+        self._pokemon_outer.rowconfigure(0, weight=1)
 
         self._pokemon_editor = PokemonEditorTab(
-            self._notebook, on_modified=self._on_data_modified
+            self._notebook,
+            on_modified=self._on_data_modified,
+            on_change=self._on_entry_changed,
         )
-        self._pokemon_editor.grid(row=0, column=0, sticky="nsew", in_=pokemon_outer)
+        self._pokemon_editor.grid(row=0, column=0, sticky="nsew", in_=self._pokemon_outer)
 
         self._pokemon_ai = AIPanel(
-            pokemon_outer,
+            self._pokemon_outer,
             assistant=self._assistant,
             on_apply_suggestion=self._apply_pokemon_suggestion,
         )
         self._pokemon_ai.grid(row=0, column=1, sticky="nsew")
-        self._notebook.add(pokemon_outer, text="Pokémon Stats")
+        self._notebook.add(self._pokemon_outer, text="Pokémon Stats")
 
-        # Sync AI panel when selection changes in Pokémon editor
         self._pokemon_editor._listbox.bind(
             "<<ListboxSelect>>",
             lambda _e: self._sync_pokemon_ai(),
         )
 
         # Move tab
-        move_outer = ttk.Frame(self._notebook)
-        move_outer.pack(fill="both", expand=True)
-        move_outer.columnconfigure(0, weight=3)
-        move_outer.columnconfigure(1, weight=1)
-        move_outer.rowconfigure(0, weight=1)
+        self._move_outer = ttk.Frame(self._notebook)
+        self._move_outer.pack(fill="both", expand=True)
+        self._move_outer.columnconfigure(0, weight=3)
+        self._move_outer.columnconfigure(1, weight=1)
+        self._move_outer.rowconfigure(0, weight=1)
 
         self._move_editor = MoveEditorTab(
-            self._notebook, on_modified=self._on_data_modified
+            self._notebook,
+            on_modified=self._on_data_modified,
+            on_change=self._on_entry_changed,
         )
-        self._move_editor.grid(row=0, column=0, sticky="nsew", in_=move_outer)
+        self._move_editor.grid(row=0, column=0, sticky="nsew", in_=self._move_outer)
 
         self._move_ai = AIPanel(
-            move_outer,
+            self._move_outer,
             assistant=self._assistant,
             on_apply_suggestion=self._apply_move_suggestion,
         )
         self._move_ai.grid(row=0, column=1, sticky="nsew")
-        self._notebook.add(move_outer, text="Moves")
+        self._notebook.add(self._move_outer, text="Moves")
 
         self._move_editor._listbox.bind(
             "<<ListboxSelect>>",
             lambda _e: self._sync_move_ai(),
         )
 
+        # Learnset tab (experimental)
+        self._learnset_editor = LearnsetEditorTab(
+            self._notebook,
+            on_modified=self._on_data_modified,
+        )
+        self._notebook.add(self._learnset_editor, text="Learnsets (Exp)")
+
         # Dungeon tab
-        dungeon_outer = ttk.Frame(self._notebook)
-        dungeon_outer.pack(fill="both", expand=True)
-        dungeon_outer.columnconfigure(0, weight=3)
-        dungeon_outer.columnconfigure(1, weight=1)
-        dungeon_outer.rowconfigure(0, weight=1)
+        self._dungeon_outer = ttk.Frame(self._notebook)
+        self._dungeon_outer.pack(fill="both", expand=True)
+        self._dungeon_outer.columnconfigure(0, weight=3)
+        self._dungeon_outer.columnconfigure(1, weight=1)
+        self._dungeon_outer.rowconfigure(0, weight=1)
 
         self._dungeon_editor = DungeonEditorTab(
-            self._notebook, on_modified=self._on_data_modified
+            self._notebook,
+            on_modified=self._on_data_modified,
+            on_change=self._on_entry_changed,
         )
-        self._dungeon_editor.grid(row=0, column=0, sticky="nsew", in_=dungeon_outer)
+        self._dungeon_editor.grid(row=0, column=0, sticky="nsew", in_=self._dungeon_outer)
 
         self._dungeon_ai = AIPanel(
-            dungeon_outer,
+            self._dungeon_outer,
             assistant=self._assistant,
             on_apply_suggestion=self._apply_dungeon_suggestion,
         )
         self._dungeon_ai.grid(row=0, column=1, sticky="nsew")
-        self._notebook.add(dungeon_outer, text="Dungeons")
+        self._notebook.add(self._dungeon_outer, text="Dungeons")
 
         self._dungeon_editor._listbox.bind(
             "<<ListboxSelect>>",
@@ -191,12 +287,88 @@ class ROMEditorApp(tk.Tk):
         self._ai_chat_panel = AIPanel(self._notebook, assistant=self._assistant)
         self._notebook.add(self._ai_chat_panel, text="AI Assistant")
 
+        # Raw text/localization-like files (safe, size-preserving mode)
+        self._text_editor = TextEditorTab(
+            self._notebook,
+            on_modified=self._on_data_modified,
+        )
+        self._notebook.add(self._text_editor, text="Text (Raw)")
+
+        # Validation warnings tab
+        self._validation_tab = ttk.Frame(self._notebook)
+        self._validation_tab.columnconfigure(0, weight=1)
+        self._validation_tab.rowconfigure(1, weight=1)
+        top = ttk.Frame(self._validation_tab)
+        top.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
+        ttk.Label(
+            top,
+            text="Warnings help catch risky values before saving.",
+            foreground="#7a4f1f",
+        ).pack(side="left")
+        ttk.Button(
+            top,
+            text="Refresh Warnings",
+            command=self._refresh_validation_warnings,
+        ).pack(side="right")
+
+        self._validation_tree = ttk.Treeview(
+            self._validation_tab,
+            columns=("kind", "name", "warning"),
+            show="headings",
+            height=14,
+        )
+        self._validation_tree.heading("kind", text="Type")
+        self._validation_tree.heading("name", text="Entry")
+        self._validation_tree.heading("warning", text="Warning")
+        self._validation_tree.column("kind", width=90, stretch=False)
+        self._validation_tree.column("name", width=220, stretch=False)
+        self._validation_tree.column("warning", width=620, stretch=True)
+        self._validation_tree.grid(row=1, column=0, sticky="nsew", padx=6, pady=(0, 6))
+
+        self._notebook.add(self._validation_tab, text="Validation")
+
     def _build_statusbar(self) -> None:
         bar = ttk.Frame(self, relief="sunken")
         bar.pack(side="bottom", fill="x")
         self._status_var = tk.StringVar(value="Ready")
         ttk.Label(bar, textvariable=self._status_var, anchor="w").pack(
             side="left", padx=6, pady=2)
+
+    def _build_changes_panel(self) -> None:
+        """Collapsible panel at the bottom showing a log of all edits."""
+        self._changes_outer = ttk.Frame(self, relief="groove")
+        self._changes_outer.pack(side="bottom", fill="x")
+
+        header = ttk.Frame(self._changes_outer)
+        header.pack(fill="x")
+        self._changes_toggle_btn = ttk.Button(
+            header, text="\u25be Changes (0)",
+            command=self._toggle_changes_panel, width=18,
+        )
+        self._changes_toggle_btn.pack(side="left", padx=2, pady=1)
+
+        self._changes_body = ttk.Frame(self._changes_outer)
+        self._changes_body.pack(fill="x")
+
+        cols = ("entity", "change")
+        self._changes_tree = ttk.Treeview(
+            self._changes_body, columns=cols,
+            show="headings", height=4, selectmode="none",
+        )
+        self._changes_tree.heading("entity", text="What")
+        self._changes_tree.heading("change", text="Change")
+        self._changes_tree.column("entity", width=200, stretch=False)
+        self._changes_tree.column("change", width=400, stretch=True)
+        self._changes_tree.pack(side="left", fill="x", expand=True)
+
+        sb = ttk.Scrollbar(
+            self._changes_body, orient="vertical",
+            command=self._changes_tree.yview,
+        )
+        self._changes_tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+
+        self._changes_visible = True
 
     # ------------------------------------------------------------------
     # ROM operations
@@ -232,6 +404,8 @@ class ROMEditorApp(tk.Tk):
                 foreground="black",
             )
             self._status(f"Loaded: {path}")
+            self._schedule_autosave()
+            self._update_guidance()
         except Exception as exc:
             messagebox.showerror("Error opening ROM", str(exc))
             self._status(f"Error: {exc}")
@@ -241,10 +415,25 @@ class ROMEditorApp(tk.Tk):
         assert self._rom is not None
         rom = self._rom
 
+        # Clear history whenever new ROM data is loaded
+        self._history.clear()
+
+        # Reset portrait container
+        self._portrait_container = None
+        self._pokemon_editor.set_portrait_container(None)
+
         # Pokémon data
         if rom.has_file(POKEMON_DATA_NARC):
-            narc = NARC.from_bytes(rom.read_file(POKEMON_DATA_NARC))
-            self._pokemon_table = PokemonTable.from_narc(narc)
+            pkmn_raw = rom.read_file(POKEMON_DATA_NARC)
+            if pkmn_raw[:4] == b"NARC":
+                narc = NARC.from_bytes(pkmn_raw)
+                self._pokemon_table = PokemonTable.from_narc(narc)
+            elif pkmn_raw[:4] == b"MD\x00\x00":
+                self._pokemon_table = PokemonTable.from_md_bytes(pkmn_raw)
+            else:
+                raise ValueError(
+                    f"Unsupported Pokémon data format at {POKEMON_DATA_NARC}"
+                )
             self._pokemon_editor.load_table(self._pokemon_table)
         else:
             self._pokemon_table = None
@@ -266,13 +455,46 @@ class ROMEditorApp(tk.Tk):
         else:
             self._dungeon_table = None
 
+        # Portrait data (kaomado.bin) — optional, fails gracefully
+        if rom.has_file(PORTRAIT_DATA):
+            try:
+                from rom_editor.nds.portrait import PortraitContainer
+                self._portrait_container = PortraitContainer(
+                    rom.read_file(PORTRAIT_DATA)
+                )
+                self._pokemon_editor.set_portrait_container(self._portrait_container)
+            except Exception as exc:
+                self._status(f"Portraits unavailable: {exc}")
+
+        # Text-like files (message/str/msg/txt) in conservative raw mode
+        self._text_editor.load_rom(rom)
+
+        # Learnset data (WAZA pointer-table format)
+        if rom.has_file(MOVE_LEARNSET_NARC):
+            try:
+                self._learnset_table = WazaLearnsetTable.from_bytes(
+                    rom.read_file(MOVE_LEARNSET_NARC)
+                )
+                self._learnset_editor.load_table(self._learnset_table)
+            except Exception as exc:
+                self._learnset_table = None
+                self._status(f"Learnsets unavailable: {exc}")
+        else:
+            self._learnset_table = None
+        self._refresh_validation_warnings()
+
     def _save_rom(self) -> None:
         if self._rom is None:
             return
-        self._write_game_data_to_rom()
-        self._rom.save()
-        self._modified = False
-        self._status(f"Saved: {self._rom.path}")
+        try:
+            self._write_game_data_to_rom()
+            self._rom.save()
+            self._modified = False
+            self._status(f"Saved: {self._rom.path}")
+            self._update_guidance()
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc))
+            self._status(f"Save failed: {exc}")
 
     def _save_rom_as(self) -> None:
         if self._rom is None:
@@ -284,19 +506,27 @@ class ROMEditorApp(tk.Tk):
         )
         if not path:
             return
-        self._write_game_data_to_rom()
-        self._rom.save(path)
-        self._modified = False
-        self._status(f"Saved as: {path}")
+        try:
+            self._write_game_data_to_rom()
+            self._rom.save(path)
+            self._modified = False
+            self._status(f"Saved as: {path}")
+            self._update_guidance()
+        except Exception as exc:
+            messagebox.showerror("Save failed", str(exc))
+            self._status(f"Save failed: {exc}")
 
     def _write_game_data_to_rom(self) -> None:
         assert self._rom is not None
         rom = self._rom
 
         if self._pokemon_table and rom.has_file(POKEMON_DATA_NARC):
-            narc = NARC.from_bytes(rom.read_file(POKEMON_DATA_NARC))
-            self._pokemon_table.write_to_narc(narc)
-            rom.write_file(POKEMON_DATA_NARC, narc.to_bytes())
+            if self._pokemon_table.source_format == "md":
+                rom.write_file(POKEMON_DATA_NARC, self._pokemon_table.to_md_bytes())
+            else:
+                narc = NARC.from_bytes(rom.read_file(POKEMON_DATA_NARC))
+                self._pokemon_table.write_to_narc(narc)
+                rom.write_file(POKEMON_DATA_NARC, narc.to_bytes())
 
         if self._move_table and rom.has_file(MOVE_DATA_NARC):
             narc = NARC.from_bytes(rom.read_file(MOVE_DATA_NARC))
@@ -307,6 +537,25 @@ class ROMEditorApp(tk.Tk):
             narc = NARC.from_bytes(rom.read_file(DUNGEON_DATA_NARC))
             self._dungeon_table.write_to_narc(narc)
             rom.write_file(DUNGEON_DATA_NARC, narc.to_bytes())
+
+        if self._learnset_table and rom.has_file(MOVE_LEARNSET_NARC):
+            # Safe path: keep a backup and restore if writing learnsets fails.
+            old_data = rom.read_file(MOVE_LEARNSET_NARC)
+            try:
+                new_data = self._learnset_table.to_bytes(
+                    auto_fit=self._learnset_editor.auto_fit_enabled()
+                )
+                rom.write_file(MOVE_LEARNSET_NARC, new_data)
+            except Exception:
+                try:
+                    rom.write_file(MOVE_LEARNSET_NARC, old_data)
+                except Exception:
+                    pass
+                raise
+
+        for path, data in self._text_editor.get_modified_files().items():
+            if rom.has_file(path):
+                rom.write_file(path, data)
 
     def _reload_from_rom(self) -> None:
         if self._rom is None:
@@ -321,6 +570,7 @@ class ROMEditorApp(tk.Tk):
         self._load_game_data()
         self._modified = False
         self._status("Reloaded data from ROM.")
+        self._update_guidance()
 
     # ------------------------------------------------------------------
     # UI state helpers
@@ -335,6 +585,8 @@ class ROMEditorApp(tk.Tk):
     def _on_data_modified(self) -> None:
         self._modified = True
         self._status("Modified (unsaved changes)")
+        self._update_guidance()
+        self._refresh_validation_warnings()
 
     def _status(self, msg: str) -> None:
         self._status_var.set(msg)
@@ -364,11 +616,16 @@ class ROMEditorApp(tk.Tk):
             return
         field = suggestion.field
         if hasattr(entry, field):
+            old_snapshot = deepcopy(entry)
             old = getattr(entry, field)
             setattr(entry, field, int(suggestion.new_value))
+            self._history.push(ChangeRecord(
+                entity_type="pokemon", index=entry.index, name=entry.name,
+                old_snapshot=old_snapshot, new_snapshot=deepcopy(entry),
+            ))
             self._pokemon_editor._populate_fields(entry)
             self._on_data_modified()
-            self._status(f"Applied: {entry.name}.{field} {old} → {suggestion.new_value}")
+            self._status(f"Applied: {entry.name}.{field} {old} \u2192 {suggestion.new_value}")
 
     def _apply_move_suggestion(self, suggestion) -> None:
         entry = self._move_editor.get_current_entry()
@@ -376,11 +633,16 @@ class ROMEditorApp(tk.Tk):
             return
         field = suggestion.field
         if hasattr(entry, field):
+            old_snapshot = deepcopy(entry)
             old = getattr(entry, field)
             setattr(entry, field, int(suggestion.new_value))
+            self._history.push(ChangeRecord(
+                entity_type="move", index=entry.index, name=entry.name,
+                old_snapshot=old_snapshot, new_snapshot=deepcopy(entry),
+            ))
             self._move_editor._populate(entry)
             self._on_data_modified()
-            self._status(f"Applied: {entry.name}.{field} {old} → {suggestion.new_value}")
+            self._status(f"Applied: {entry.name}.{field} {old} \u2192 {suggestion.new_value}")
 
     def _apply_dungeon_suggestion(self, suggestion) -> None:
         entry = self._dungeon_editor.get_current_entry()
@@ -388,11 +650,293 @@ class ROMEditorApp(tk.Tk):
             return
         field = suggestion.field
         if hasattr(entry, field):
+            old_snapshot = deepcopy(entry)
             old = getattr(entry, field)
             setattr(entry, field, int(suggestion.new_value))
+            self._history.push(ChangeRecord(
+                entity_type="dungeon", index=entry.index, name=entry.name,
+                old_snapshot=old_snapshot, new_snapshot=deepcopy(entry),
+            ))
             self._dungeon_editor._populate(entry)
             self._on_data_modified()
-            self._status(f"Applied: {entry.name}.{field} {old} → {suggestion.new_value}")
+            self._status(f"Applied: {entry.name}.{field} {old} \u2192 {suggestion.new_value}")
+
+    # ------------------------------------------------------------------
+    # Auto-save
+    # ------------------------------------------------------------------
+
+    def _schedule_autosave(self) -> None:
+        """Start (or restart) the 3-minute auto-save timer."""
+        if self._autosave_job is not None:
+            self.after_cancel(self._autosave_job)
+        self._autosave_job = self.after(180_000, self._autosave)
+
+    def _autosave(self) -> None:
+        if self._rom is not None and self._modified:
+            try:
+                sidecar = str(self._rom.path) + ".autosave.nds"
+                self._write_game_data_to_rom()
+                self._rom.save(sidecar)
+                now = datetime.datetime.now().strftime("%H:%M")
+                self._status(
+                    f"Auto-saved at {now}  \u2192  {Path(sidecar).name}"
+                )
+            except Exception as exc:
+                self._status(f"Auto-save failed: {exc}")
+        # Always reschedule
+        self._autosave_job = self.after(180_000, self._autosave)
+
+    # ------------------------------------------------------------------
+    # Simple / Advanced mode toggle
+    # ------------------------------------------------------------------
+
+    def _toggle_mode(self) -> None:
+        simple = not self._simple_mode.get()
+        self._simple_mode.set(simple)
+        label = "Advanced Mode" if simple else "Simple Mode"
+        self._mode_btn.configure(text=label)
+        self._pokemon_editor.set_simple_mode(simple)
+        self._move_editor.set_simple_mode(simple)
+        self._dungeon_editor.set_simple_mode(simple)
+        self._update_guidance()
+
+    def _toggle_focus_assist(self) -> None:
+        enabled = not self._focus_assist.get()
+        self._focus_assist.set(enabled)
+        self._set_focus_assist(enabled)
+
+    def _set_focus_assist(self, enabled: bool) -> None:
+        """Hide side AI panels to reduce visual/cognitive load."""
+        if enabled:
+            self._pokemon_ai.grid_remove()
+            self._move_ai.grid_remove()
+            self._dungeon_ai.grid_remove()
+            self._pokemon_outer.columnconfigure(0, weight=1)
+            self._move_outer.columnconfigure(0, weight=1)
+            self._dungeon_outer.columnconfigure(0, weight=1)
+            self._focus_btn.configure(text="Focus Assist: On")
+        else:
+            self._pokemon_ai.grid(row=0, column=1, sticky="nsew")
+            self._move_ai.grid(row=0, column=1, sticky="nsew")
+            self._dungeon_ai.grid(row=0, column=1, sticky="nsew")
+            self._pokemon_outer.columnconfigure(0, weight=3)
+            self._move_outer.columnconfigure(0, weight=3)
+            self._dungeon_outer.columnconfigure(0, weight=3)
+            self._focus_btn.configure(text="Focus Assist: Off")
+        self._update_guidance()
+
+    def _toggle_neuro_mode(self) -> None:
+        enabled = not self._neuro_mode.get()
+        self._neuro_mode.set(enabled)
+        self._settings["neuro_mode"] = enabled
+        self._save_settings()
+        self._apply_neuro_mode()
+
+    def _apply_neuro_mode(self, initial: bool = False) -> None:
+        enabled = self._neuro_mode.get()
+        self._neuro_btn.configure(
+            text="Neuro Mode: On" if enabled else "Neuro Mode: Off"
+        )
+        if enabled:
+            self._pokemon_editor.set_dropdown_picker_mode(True)
+            self._move_editor.set_dropdown_picker_mode(True)
+            self._dungeon_editor.set_dropdown_picker_mode(True)
+            self._learnset_editor.set_dropdown_picker_mode(True)
+            if not self._simple_mode.get():
+                self._toggle_mode()
+            if not self._focus_assist.get():
+                self._focus_assist.set(True)
+                self._set_focus_assist(True)
+        elif not initial:
+            # Turning neuro mode off does not force advanced mode back on.
+            self._update_guidance()
+
+    def _update_guidance(self) -> None:
+        if self._rom is None:
+            self._guide_var.set(
+                "Step 1: Open a ROM. Then pick one tab, make one small change, and save."
+            )
+            return
+        if self._modified:
+            self._guide_var.set(
+                "You have unsaved changes. Step 4: Save ROM now (Ctrl+S)."
+            )
+            return
+        if not self._history.has_undo():
+            self._guide_var.set(
+                "Step 2: Select a Pokémon, move, or dungeon entry and edit one field at a time."
+            )
+            return
+        self._guide_var.set(
+            "Great progress. Continue with one small edit, then Save ROM when ready."
+        )
+
+    # ------------------------------------------------------------------
+    # Undo / Redo
+    # ------------------------------------------------------------------
+
+    def _on_entry_changed(
+        self,
+        entity_type: str,
+        index: int,
+        name: str,
+        old_snapshot,
+        new_snapshot,
+    ) -> None:
+        """Called by each editor's Apply Changes; pushes a history record."""
+        self._history.push(ChangeRecord(
+            entity_type=entity_type,
+            index=index,
+            name=name,
+            old_snapshot=old_snapshot,
+            new_snapshot=new_snapshot,
+        ))
+
+    def _on_history_changed(self, records) -> None:
+        """Refresh changes panel and update Edit menu state."""
+        self._refresh_changes_panel(records)
+        undo_state = "normal" if self._history.has_undo() else "disabled"
+        redo_state = "normal" if self._history.has_redo() else "disabled"
+        self._edit_menu.entryconfigure("Undo", state=undo_state)
+        self._edit_menu.entryconfigure("Redo", state=redo_state)
+
+    def _undo(self) -> None:
+        rec = self._history.undo()
+        if rec is None:
+            self._status("Nothing to undo.")
+            return
+        self._restore_snapshot(rec.entity_type, rec.index, rec.old_snapshot)
+        self._status(f"Undid: {rec.name}")
+        self._update_guidance()
+        self._refresh_validation_warnings()
+
+    def _redo(self) -> None:
+        rec = self._history.redo()
+        if rec is None:
+            self._status("Nothing to redo.")
+            return
+        self._restore_snapshot(rec.entity_type, rec.index, rec.new_snapshot)
+        self._status(f"Redid: {rec.name}")
+        self._update_guidance()
+        self._refresh_validation_warnings()
+
+    def _refresh_validation_warnings(self) -> None:
+        self._validation_tree.delete(*self._validation_tree.get_children())
+        warnings = self._collect_validation_warnings()
+        if not warnings:
+            self._validation_tree.insert(
+                "", "end", values=("Info", "All", "No warnings detected.")
+            )
+            return
+        for kind, name, msg in warnings:
+            self._validation_tree.insert("", "end", values=(kind, name, msg))
+
+    def _collect_validation_warnings(self) -> list[tuple[str, str, str]]:
+        out: list[tuple[str, str, str]] = []
+
+        if self._pokemon_table:
+            for e in self._pokemon_table:
+                if e.base_hp <= 1 or e.base_hp > 255:
+                    out.append(("Pokemon", e.name, f"Base HP looks invalid: {e.base_hp}"))
+                if e.bst > 700:
+                    out.append(("Pokemon", e.name, f"Very high BST: {e.bst}"))
+                if e.base_spd <= 0:
+                    out.append(("Pokemon", e.name, f"Speed is non-positive: {e.base_spd}"))
+
+        if self._move_table:
+            for m in self._move_table:
+                if m.base_power > 250:
+                    out.append(("Move", m.name, f"Very high base power: {m.base_power}"))
+                if m.accuracy > 100:
+                    out.append(("Move", m.name, f"Accuracy over 100: {m.accuracy}"))
+                if m.hits_min > m.hits_max:
+                    out.append(("Move", m.name, "Min hits is greater than max hits"))
+
+        if self._dungeon_table:
+            for d in self._dungeon_table:
+                if d.num_floors <= 0:
+                    out.append(("Dungeon", d.name, "Floor count must be at least 1"))
+                if d.num_floors > 99:
+                    out.append(("Dungeon", d.name, f"Very high floor count: {d.num_floors}"))
+                if d.item_density > 100:
+                    out.append(("Dungeon", d.name, f"Item density over 100: {d.item_density}"))
+                if d.trap_density > 100:
+                    out.append(("Dungeon", d.name, f"Trap density over 100: {d.trap_density}"))
+
+        return out
+
+    def _restore_snapshot(self, entity_type: str, index: int, snapshot) -> None:
+        """Copy all dataclass fields from *snapshot* into the live table entry."""
+        if entity_type == "pokemon" and self._pokemon_table:
+            target = self._pokemon_table[index]
+            for f in dataclasses.fields(target):
+                setattr(target, f.name, getattr(snapshot, f.name))
+            cur = self._pokemon_editor.get_current_entry()
+            if cur is not None and cur.index == index:
+                self._pokemon_editor._populate_fields(target)
+        elif entity_type == "move" and self._move_table:
+            target = self._move_table[index]
+            for f in dataclasses.fields(target):
+                setattr(target, f.name, getattr(snapshot, f.name))
+            cur = self._move_editor.get_current_entry()
+            if cur is not None and cur.index == index:
+                self._move_editor._populate(target)
+        elif entity_type == "dungeon" and self._dungeon_table:
+            target = self._dungeon_table[index]
+            for f in dataclasses.fields(target):
+                setattr(target, f.name, getattr(snapshot, f.name))
+            cur = self._dungeon_editor.get_current_entry()
+            if cur is not None and cur.index == index:
+                self._dungeon_editor._populate(target)
+
+    # ------------------------------------------------------------------
+    # Changes panel
+    # ------------------------------------------------------------------
+
+    def _toggle_changes_panel(self) -> None:
+        if self._changes_visible:
+            self._changes_body.pack_forget()
+            count = len(self._history.records)
+            self._changes_toggle_btn.configure(
+                text=f"\u25b8 Changes ({count})")
+        else:
+            self._changes_body.pack(fill="x")
+            count = len(self._history.records)
+            self._changes_toggle_btn.configure(
+                text=f"\u25be Changes ({count})")
+        self._changes_visible = not self._changes_visible
+
+    def _refresh_changes_panel(self, records) -> None:
+        """Repopulate the changes treeview with the current history records."""
+        self._changes_tree.delete(*self._changes_tree.get_children())
+        count = len(records)
+        label = f"\u25be Changes ({count})" if self._changes_visible \
+            else f"\u25b8 Changes ({count})"
+        self._changes_toggle_btn.configure(text=label)
+        # Show newest first
+        for rec in reversed(records):
+            kind = rec.entity_type.capitalize()
+            diff = self._describe_diff(rec.old_snapshot, rec.new_snapshot)
+            self._changes_tree.insert(
+                "", "end",
+                values=(f"[{kind}] {rec.name}", diff),
+            )
+
+    @staticmethod
+    def _describe_diff(old, new) -> str:
+        """Return a short human-readable summary of changed fields."""
+        changes = []
+        for f in dataclasses.fields(old):
+            if f.name == "index":
+                continue
+            ov = getattr(old, f.name)
+            nv = getattr(new, f.name)
+            if ov != nv:
+                changes.append(f"{f.name}: {ov}\u2192{nv}")
+        if not changes:
+            return "no changes"
+        summary = ", ".join(changes[:3])
+        return summary + ("\u2026" if len(changes) > 3 else "")
 
     # ------------------------------------------------------------------
     # Dialogs
@@ -445,4 +989,6 @@ class ROMEditorApp(tk.Tk):
             )
             if not ok:
                 return
+        if self._autosave_job is not None:
+            self.after_cancel(self._autosave_job)
         self.destroy()

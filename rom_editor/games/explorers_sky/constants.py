@@ -19,17 +19,27 @@ GAME_CODES = {"YOTE", "YOTJ", "YOTK"}
 # NARC file paths within the ROM
 # ---------------------------------------------------------------------------
 
-# Pokémon base stats (one file per Pokémon in the NARC)
-POKEMON_DATA_NARC = "/BALANCE/m_level.bin"
+# Pokémon base stats (MD format: magic "MD", ~130 bytes per entry)
+POKEMON_DATA_NARC = "/BALANCE/MONSTER.MD"
 
 # Move data (one entry per move)
-MOVE_DATA_NARC = "/BALANCE/waza_p.bin"
+MOVE_DATA_NARC = "/BALANCE/WAZA_P.BIN"
 
 # Move learnset data (one entry per Pokémon)
-MOVE_LEARNSET_NARC = "/BALANCE/waza_p2.bin"
+MOVE_LEARNSET_NARC = "/BALANCE/WAZA_P2.BIN"
 
 # Dungeon data files
-DUNGEON_DATA_NARC = "/DUNGEON/dungeon.bin"
+DUNGEON_DATA_NARC = "/DUNGEON/DUNGEON.BIN"
+
+# Portrait sprites (kaomado container, one block per Pokémon × emotion)
+PORTRAIT_DATA = "/FONT/KAOMADO.KAO"
+
+# Portrait emotion names (indices 0–39; 40 total slots in kaomado)
+EMOTION_NAMES: list[str] = [
+    "Normal", "Happy", "Pain", "Angry", "Worried", "Sad",
+    "Crying", "Shouting", "Teary-Eyed", "Determined", "Scared",
+    "Joyous", "Inspired", "Surprised", "Dizzy", "Special",
+] + [f"Emotion {i}" for i in range(16, 40)]
 
 # ---------------------------------------------------------------------------
 # Pokémon names (National Dex order, index 0 = ???/empty, 1 = Bulbasaur, …)

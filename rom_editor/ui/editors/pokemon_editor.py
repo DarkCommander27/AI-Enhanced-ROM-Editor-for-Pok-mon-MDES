@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from copy import deepcopy
 from tkinter import ttk, messagebox
 from typing import Optional, Callable
 
@@ -10,6 +11,29 @@ from rom_editor.games.explorers_sky.pokemon import PokemonEntry, PokemonTable
 from rom_editor.games.explorers_sky.constants import (
     POKEMON_NAMES, TYPE_NAMES, ABILITY_NAMES, EXP_GROUP_NAMES,
 )
+from rom_editor.ui.editors.sprite_viewer import SpriteViewer
+
+# Official type colours  (Gen-IV palette — EoS uses exactly these 18 slots)
+TYPE_COLORS: dict[str, str] = {
+    "Normal":   "#A8A878",
+    "Fire":     "#F08030",
+    "Water":    "#6890F0",
+    "Grass":    "#78C850",
+    "Electric": "#F8D030",
+    "Ice":      "#98D8D8",
+    "Fighting": "#C03028",
+    "Poison":   "#A040A0",
+    "Ground":   "#E0C068",
+    "Flying":   "#A890F0",
+    "Psychic":  "#F85888",
+    "Bug":      "#A8B820",
+    "Rock":     "#B8A038",
+    "Ghost":    "#705898",
+    "Dragon":   "#7038F8",
+    "Dark":     "#705848",
+    "Steel":    "#B8B8D0",
+    "???":      "#888888",
+}
 
 
 class PokemonEditorTab(ttk.Frame):
@@ -28,11 +52,18 @@ class PokemonEditorTab(ttk.Frame):
         self,
         parent: ttk.Notebook,
         on_modified: Optional[Callable] = None,
+        on_change: Optional[Callable] = None,
     ) -> None:
         super().__init__(parent)
         self._table: Optional[PokemonTable] = None
         self._on_modified = on_modified
+        self._on_change = on_change
         self._current_entry: Optional[PokemonEntry] = None
+        self._picker_options: list[str] = []
+        self._picker_lookup: dict[str, int] = {}
+        self._advanced_widgets: list[tk.Widget] = []
+        self._portrait_container = None
+        self._sprite_viewer: Optional[SpriteViewer] = None
         self._stat_vars: dict[str, tk.IntVar] = {}
         self._type1_var = tk.StringVar()
         self._type2_var = tk.StringVar()
@@ -52,12 +83,43 @@ class PokemonEditorTab(ttk.Frame):
         """Populate the listbox with all Pokémon from *table*."""
         self._table = table
         self._listbox.delete(0, tk.END)
-        for entry in table:
+        self._picker_options = []
+        self._picker_lookup = {}
+        for pos, entry in enumerate(table):
             label = f"#{entry.index:03d} {entry.name}"
             self._listbox.insert(tk.END, label)
+            self._picker_options.append(label)
+            self._picker_lookup[label] = entry.index
+            self._colorize_item(pos, entry)
+        self._picker_cb.configure(values=self._picker_options)
+        if self._picker_options:
+            self._picker_var.set(self._picker_options[0])
 
     def get_current_entry(self) -> Optional[PokemonEntry]:
         return self._current_entry
+
+    def set_simple_mode(self, simple: bool) -> None:
+        """Show or hide advanced fields depending on *simple*."""
+        for widget in self._advanced_widgets:
+            if simple:
+                widget.grid_remove()
+            else:
+                widget.grid()
+
+    def set_dropdown_picker_mode(self, enabled: bool) -> None:
+        """Enable or disable no-typing dropdown picker mode."""
+        if self._dropdown_picker_var.get() != enabled:
+            self._dropdown_picker_var.set(enabled)
+            self._toggle_picker_mode()
+
+    def _colorize_item(self, pos: int, entry: PokemonEntry) -> None:
+        """Set the listbox item foreground to match the Pokémon's primary type."""
+        type_name = (
+            TYPE_NAMES[entry.type1]
+            if 0 <= entry.type1 < len(TYPE_NAMES) else "???"
+        )
+        color = TYPE_COLORS.get(type_name, "#000000")
+        self._listbox.itemconfigure(pos, foreground=color)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -71,18 +133,43 @@ class PokemonEditorTab(ttk.Frame):
         left = ttk.Frame(self)
         left.grid(row=0, column=0, sticky="ns", padx=4, pady=4)
 
+        self._dropdown_picker_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            left,
+            text="Pure dropdown picker",
+            variable=self._dropdown_picker_var,
+            command=self._toggle_picker_mode,
+        ).pack(anchor="w", pady=(0, 4))
+
+        self._picker_var = tk.StringVar()
+        self._picker_cb = ttk.Combobox(
+            left,
+            textvariable=self._picker_var,
+            values=[],
+            state="readonly",
+            width=22,
+        )
+        self._picker_cb.bind("<<ComboboxSelected>>", self._on_pick)
+
         ttk.Label(left, text="Search:").pack(anchor="w")
         self._search_var = tk.StringVar()
         self._search_var.trace_add("write", self._on_search_changed)
-        ttk.Entry(left, textvariable=self._search_var, width=22).pack(fill="x")
+        self._search_entry = ttk.Entry(left, textvariable=self._search_var, width=22)
+        self._search_entry.pack(fill="x")
 
-        self._listbox = tk.Listbox(left, width=24, exportselection=False)
-        self._listbox.pack(fill="both", expand=True)
-        sb = ttk.Scrollbar(left, orient="vertical", command=self._listbox.yview)
+        self._list_frame = ttk.Frame(left)
+        self._list_frame.pack(fill="both", expand=True)
+        self._listbox = tk.Listbox(self._list_frame, width=24, exportselection=False)
+        sb = ttk.Scrollbar(self._list_frame, orient="vertical", command=self._listbox.yview)
         self._listbox.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
         self._listbox.pack(side="left", fill="both", expand=True)
         self._listbox.bind("<<ListboxSelect>>", self._on_select)
+
+        # Portrait viewer below listbox
+        self._sprite_viewer = SpriteViewer(left)
+        self._sprite_viewer.pack(fill="x", pady=(4, 0))
+        self._sprite_viewer.on_emotion_changed = lambda _: self._update_portrait()
 
         # --- Right panel: stat editor ---
         right = ttk.Frame(self)
@@ -96,36 +183,52 @@ class PokemonEditorTab(ttk.Frame):
         )
         row += 1
 
-        # Type selectors
-        for label_text, var, options in [
-            ("Type 1:", self._type1_var, TYPE_NAMES),
-            ("Type 2:", self._type2_var, TYPE_NAMES),
-        ]:
-            ttk.Label(right, text=label_text).grid(row=row, column=0, sticky="e", padx=4)
-            cb = ttk.Combobox(right, textvariable=var, values=options,
-                              state="readonly", width=14)
-            cb.grid(row=row, column=1, sticky="w")
-            cb.bind("<<ComboboxSelected>>", self._on_field_changed)
-            row += 1
+        # Type 1 (shown in simple mode)
+        ttk.Label(right, text="Type 1:").grid(row=row, column=0, sticky="e", padx=4)
+        cb_type1 = ttk.Combobox(right, textvariable=self._type1_var,
+                                values=TYPE_NAMES, state="readonly", width=14)
+        cb_type1.grid(row=row, column=1, sticky="w")
+        cb_type1.bind("<<ComboboxSelected>>", self._on_field_changed)
+        row += 1
 
-        # Ability selectors
-        for label_text, var in [
-            ("Ability 1:", self._ability1_var),
-            ("Ability 2:", self._ability2_var),
-        ]:
-            ttk.Label(right, text=label_text).grid(row=row, column=0, sticky="e", padx=4)
-            cb = ttk.Combobox(right, textvariable=var, values=ABILITY_NAMES,
-                              state="readonly", width=20)
-            cb.grid(row=row, column=1, sticky="w")
-            cb.bind("<<ComboboxSelected>>", self._on_field_changed)
-            row += 1
+        # Type 2 (advanced only)
+        lbl_type2 = ttk.Label(right, text="Type 2:")
+        lbl_type2.grid(row=row, column=0, sticky="e", padx=4)
+        cb_type2 = ttk.Combobox(right, textvariable=self._type2_var,
+                                values=TYPE_NAMES, state="readonly", width=14)
+        cb_type2.grid(row=row, column=1, sticky="w")
+        cb_type2.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_type2, cb_type2])
+        row += 1
 
-        # EXP Group
-        ttk.Label(right, text="EXP Group:").grid(row=row, column=0, sticky="e", padx=4)
-        cb = ttk.Combobox(right, textvariable=self._exp_group_var,
-                          values=EXP_GROUP_NAMES, state="readonly", width=14)
-        cb.grid(row=row, column=1, sticky="w")
-        cb.bind("<<ComboboxSelected>>", self._on_field_changed)
+        # Ability 1 (advanced only)
+        lbl_ab1 = ttk.Label(right, text="Ability 1:")
+        lbl_ab1.grid(row=row, column=0, sticky="e", padx=4)
+        cb_ab1 = ttk.Combobox(right, textvariable=self._ability1_var,
+                              values=ABILITY_NAMES, state="readonly", width=20)
+        cb_ab1.grid(row=row, column=1, sticky="w")
+        cb_ab1.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_ab1, cb_ab1])
+        row += 1
+
+        # Ability 2 (advanced only)
+        lbl_ab2 = ttk.Label(right, text="Ability 2:")
+        lbl_ab2.grid(row=row, column=0, sticky="e", padx=4)
+        cb_ab2 = ttk.Combobox(right, textvariable=self._ability2_var,
+                              values=ABILITY_NAMES, state="readonly", width=20)
+        cb_ab2.grid(row=row, column=1, sticky="w")
+        cb_ab2.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_ab2, cb_ab2])
+        row += 1
+
+        # EXP Group (advanced only)
+        lbl_exp = ttk.Label(right, text="EXP Group:")
+        lbl_exp.grid(row=row, column=0, sticky="e", padx=4)
+        cb_exp = ttk.Combobox(right, textvariable=self._exp_group_var,
+                              values=EXP_GROUP_NAMES, state="readonly", width=14)
+        cb_exp.grid(row=row, column=1, sticky="w")
+        cb_exp.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_exp, cb_exp])
         row += 1
 
         # Stat spinboxes
@@ -146,15 +249,22 @@ class PokemonEditorTab(ttk.Frame):
             sb.bind("<FocusOut>", self._on_stat_changed)
             row += 1
 
-        # Recruit / Size
-        ttk.Label(right, text="Recruit Rate:").grid(row=row, column=0, sticky="e", padx=4)
-        ttk.Spinbox(right, from_=-100, to=100, textvariable=self._recruit_var,
-                    width=6).grid(row=row, column=1, sticky="w")
+        # Recruit Rate (advanced only)
+        lbl_rec = ttk.Label(right, text="Recruit Rate:")
+        lbl_rec.grid(row=row, column=0, sticky="e", padx=4)
+        sb_rec = ttk.Spinbox(right, from_=-100, to=100,
+                             textvariable=self._recruit_var, width=6)
+        sb_rec.grid(row=row, column=1, sticky="w")
+        self._advanced_widgets.extend([lbl_rec, sb_rec])
         row += 1
 
-        ttk.Label(right, text="Size:").grid(row=row, column=0, sticky="e", padx=4)
-        ttk.Spinbox(right, from_=1, to=4, textvariable=self._size_var,
-                    width=4).grid(row=row, column=1, sticky="w")
+        # Size (advanced only)
+        lbl_size = ttk.Label(right, text="Size:")
+        lbl_size.grid(row=row, column=0, sticky="e", padx=4)
+        sb_size = ttk.Spinbox(right, from_=1, to=4,
+                              textvariable=self._size_var, width=4)
+        sb_size.grid(row=row, column=1, sticky="w")
+        self._advanced_widgets.extend([lbl_size, sb_size])
         row += 1
 
         # Apply button
@@ -166,15 +276,18 @@ class PokemonEditorTab(ttk.Frame):
     # Event handlers
     # ------------------------------------------------------------------
 
-    def _on_search_changed(self, *_args) -> None:
+    def _on_search_changed(self, *_) -> None:
         query = self._search_var.get().lower()
         self._listbox.delete(0, tk.END)
         if self._table is None:
             return
+        pos = 0
         for entry in self._table:
             label = f"#{entry.index:03d} {entry.name}"
             if query in label.lower():
                 self._listbox.insert(tk.END, label)
+                self._colorize_item(pos, entry)
+                pos += 1
 
     def _on_select(self, _event=None) -> None:
         sel = self._listbox.curselection()
@@ -182,9 +295,41 @@ class PokemonEditorTab(ttk.Frame):
             return
         label = self._listbox.get(sel[0])
         idx = int(label.split()[0].lstrip("#"))
+        self._picker_var.set(label)
         entry = self._table[idx]
         self._current_entry = entry
         self._populate_fields(entry)
+        self._update_portrait()
+
+    def _on_pick(self, _event=None) -> None:
+        if self._table is None:
+            return
+        label = self._picker_var.get()
+        idx = self._picker_lookup.get(label)
+        if idx is None:
+            return
+        entry = self._table[idx]
+        self._current_entry = entry
+        self._populate_fields(entry)
+        self._update_portrait()
+
+        for i in range(self._listbox.size()):
+            if self._listbox.get(i).startswith(f"#{idx:03d} "):
+                self._listbox.selection_clear(0, tk.END)
+                self._listbox.selection_set(i)
+                self._listbox.see(i)
+                break
+
+    def _toggle_picker_mode(self) -> None:
+        dropdown = self._dropdown_picker_var.get()
+        if dropdown:
+            self._picker_cb.pack(fill="x", pady=(0, 4))
+            self._search_entry.pack_forget()
+            self._list_frame.pack_forget()
+        else:
+            self._picker_cb.pack_forget()
+            self._search_entry.pack(fill="x")
+            self._list_frame.pack(fill="both", expand=True)
 
     def _on_field_changed(self, _event=None) -> None:
         if self._current_entry is None:
@@ -196,34 +341,11 @@ class PokemonEditorTab(ttk.Frame):
             return
         self._update_bst()
 
-    def _populate_fields(self, entry: PokemonEntry) -> None:
-        """Fill UI fields with data from *entry*."""
-        self._type1_var.set(TYPE_NAMES[entry.type1] if entry.type1 < len(TYPE_NAMES) else "???")
-        self._type2_var.set(TYPE_NAMES[entry.type2] if entry.type2 < len(TYPE_NAMES) else "???")
-        ab1 = ABILITY_NAMES[entry.ability1] if entry.ability1 < len(ABILITY_NAMES) else "???"
-        ab2 = ABILITY_NAMES[entry.ability2] if entry.ability2 < len(ABILITY_NAMES) else "???"
-        self._ability1_var.set(ab1)
-        self._ability2_var.set(ab2)
-        exp = EXP_GROUP_NAMES[entry.exp_group] if entry.exp_group < len(EXP_GROUP_NAMES) else "???"
-        self._exp_group_var.set(exp)
-        for field, _ in self._STAT_FIELDS:
-            self._stat_vars[field].set(getattr(entry, field))
-        self._recruit_var.set(entry.recruit_rate1)
-        self._size_var.set(entry.size)
-        self._update_bst()
-
-    def _update_bst(self) -> None:
-        try:
-            total = sum(self._stat_vars[f].get() for f, _ in self._STAT_FIELDS)
-            name = self._current_entry.name if self._current_entry else "—"
-            self._bst_var.set(f"{name}  —  BST: {total}")
-        except Exception:
-            pass
-
     def _apply_changes(self, notify: bool = True) -> None:
         entry = self._current_entry
         if entry is None:
             return
+        old_snapshot = deepcopy(entry) if (notify and self._on_change) else None
         try:
             entry.type1 = TYPE_NAMES.index(self._type1_var.get())
         except ValueError:
@@ -249,5 +371,68 @@ class PokemonEditorTab(ttk.Frame):
         entry.recruit_rate1 = max(-128, min(127, self._recruit_var.get()))
         entry.size = max(1, min(4, self._size_var.get()))
         self._update_bst()
-        if notify and self._on_modified:
-            self._on_modified()
+        if notify:
+            if self._on_change and old_snapshot is not None:
+                self._on_change(
+                    "pokemon", entry.index, entry.name,
+                    old_snapshot, deepcopy(entry),
+                )
+            if self._on_modified:
+                self._on_modified()
+
+    # ------------------------------------------------------------------
+    # Portrait
+    # ------------------------------------------------------------------
+
+    def set_portrait_container(self, container) -> None:
+        """Provide the kaomado PortraitContainer (or None to clear)."""
+        self._portrait_container = container
+        self._update_portrait()
+
+    def _update_portrait(self) -> None:
+        if self._sprite_viewer is None:
+            return
+        if self._current_entry is None or self._portrait_container is None:
+            self._sprite_viewer.set_portrait(None)
+            return
+        emotion = self._sprite_viewer.get_emotion()
+        img = self._portrait_container.get_portrait(
+            self._current_entry.index, emotion
+        )
+        self._sprite_viewer.set_portrait(img)
+
+    # ------------------------------------------------------------------
+    # Field population helpers
+    # ------------------------------------------------------------------
+
+    def _populate_fields(self, entry: PokemonEntry) -> None:
+        self._type1_var.set(
+            TYPE_NAMES[entry.type1]
+            if 0 <= entry.type1 < len(TYPE_NAMES) else "???"
+        )
+        self._type2_var.set(
+            TYPE_NAMES[entry.type2]
+            if 0 <= entry.type2 < len(TYPE_NAMES) else "???"
+        )
+        self._ability1_var.set(
+            ABILITY_NAMES[entry.ability1]
+            if 0 <= entry.ability1 < len(ABILITY_NAMES) else ""
+        )
+        self._ability2_var.set(
+            ABILITY_NAMES[entry.ability2]
+            if 0 <= entry.ability2 < len(ABILITY_NAMES) else ""
+        )
+        self._exp_group_var.set(
+            EXP_GROUP_NAMES[entry.exp_group]
+            if 0 <= entry.exp_group < len(EXP_GROUP_NAMES) else ""
+        )
+        self._recruit_var.set(entry.recruit_rate1)
+        self._size_var.set(entry.size)
+        for field, _ in self._STAT_FIELDS:
+            self._stat_vars[field].set(getattr(entry, field, 0))
+        self._update_bst()
+
+    def _update_bst(self) -> None:
+        total = sum(v.get() for v in self._stat_vars.values())
+        self._bst_var.set(f"BST: {total}")
+

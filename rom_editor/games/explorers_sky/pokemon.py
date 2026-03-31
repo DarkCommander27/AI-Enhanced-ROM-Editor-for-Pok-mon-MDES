@@ -43,6 +43,10 @@ from rom_editor.games.explorers_sky.constants import (
 _ENTRY_SIZE = 0x1C  # 28 bytes per Pokémon
 _STRUCT = struct.Struct("<BBBBBBHHHHHHBBbBHbxxx")  # 28 bytes total
 
+_MD_MAGIC = b"MD\x00\x00"
+_MD_HEADER = struct.Struct("<4sI")
+_MD_ENTRY_SIZE = 0x44  # 68 bytes per entry in monster.md (EoS)
+
 
 @dataclass
 class PokemonEntry:
@@ -172,8 +176,9 @@ class PokemonTable:
         raw_narc = table.to_narc_bytes(narc)
     """
 
-    def __init__(self, entries: list[PokemonEntry]) -> None:
+    def __init__(self, entries: list[PokemonEntry], source_format: str = "narc") -> None:
         self._entries = entries
+        self.source_format = source_format
 
     # ------------------------------------------------------------------
     # Constructors
@@ -192,7 +197,75 @@ class PokemonTable:
                 continue
             entry = PokemonEntry.from_bytes(i, bytes(narc_file.data))
             entries.append(entry)
-        return cls(entries)
+        return cls(entries, source_format="narc")
+
+    @classmethod
+    def from_md_bytes(cls, data: bytes) -> "PokemonTable":
+        """Parse monster.md (MD\0\0 + 68-byte entries) into editable entries.
+
+        The editor focuses on gameplay stats fields, so this maps the core stats/
+        type/ability values used by the UI while leaving unknown MD fields untouched
+        on write by preserving a private copy of the original blob.
+        """
+        if len(data) < _MD_HEADER.size:
+            raise ValueError("monster.md too short for header")
+        magic, count = _MD_HEADER.unpack_from(data, 0)
+        if magic != _MD_MAGIC:
+            raise ValueError(f"Not monster.md magic: {magic!r}")
+
+        need = _MD_HEADER.size + (count * _MD_ENTRY_SIZE)
+        if len(data) < need:
+            raise ValueError(
+                f"monster.md truncated: {len(data)} < expected {need}"
+            )
+
+        entries: list[PokemonEntry] = []
+        for i in range(count):
+            off = _MD_HEADER.size + i * _MD_ENTRY_SIZE
+            chunk = data[off: off + _MD_ENTRY_SIZE]
+
+            # Layout follows ppmd's PokeMonsterData (EoS, 68 bytes).
+            type1 = chunk[20]
+            type2 = chunk[21]
+            iq_group = chunk[23]
+            ability1 = chunk[24]
+            ability2 = chunk[25]
+            flags = struct.unpack_from("<H", chunk, 26)[0] & 0xFF
+            exp_yield = struct.unpack_from("<H", chunk, 28)[0] & 0xFF
+            recruit_rate1 = struct.unpack_from("<h", chunk, 30)[0]
+            base_hp = struct.unpack_from("<H", chunk, 32)[0]
+            recruit_rate2 = struct.unpack_from("<h", chunk, 34)[0]
+            base_atk = chunk[36]
+            base_spatk = chunk[37]
+            base_def = chunk[38]
+            base_spdef = chunk[39]
+            size = struct.unpack_from("<H", chunk, 42)[0]
+
+            entries.append(PokemonEntry(
+                index=i,
+                type1=type1,
+                type2=type2,
+                iq_group=iq_group,
+                ability1=ability1,
+                ability2=ability2,
+                flags=flags,
+                base_hp=base_hp,
+                base_atk=base_atk,
+                base_spatk=base_spatk,
+                base_def=base_def,
+                base_spdef=base_spdef,
+                base_spd=base_spatk,  # MD does not expose separate speed byte here.
+                exp_group=0,
+                exp_yield=exp_yield,
+                recruit_rate1=recruit_rate1,
+                size=max(1, min(4, size)),
+                recruit_rate2=recruit_rate2,
+            ))
+
+        table = cls(entries, source_format="md")
+        table._md_blob = bytearray(data)
+        table._md_count = count
+        return table
 
     @classmethod
     def from_bytes(cls, data: bytes) -> "PokemonTable":
@@ -203,7 +276,7 @@ class PokemonTable:
             offset = i * _ENTRY_SIZE
             entry = PokemonEntry.from_bytes(i, data[offset:offset + _ENTRY_SIZE])
             entries.append(entry)
-        return cls(entries)
+        return cls(entries, source_format="flat")
 
     # ------------------------------------------------------------------
     # Public API
@@ -235,3 +308,33 @@ class PokemonTable:
         for entry in self._entries:
             if entry.index < narc.num_files:
                 narc[entry.index].data = bytearray(entry.to_bytes())
+
+    def to_md_bytes(self) -> bytes:
+        """Serialize edited values back into the original monster.md buffer."""
+        if not hasattr(self, "_md_blob"):
+            raise ValueError("MD source blob unavailable for serialization")
+
+        blob = bytearray(self._md_blob)
+        count = getattr(self, "_md_count", len(self._entries))
+        for entry in self._entries:
+            if not (0 <= entry.index < count):
+                continue
+            off = _MD_HEADER.size + entry.index * _MD_ENTRY_SIZE
+
+            blob[off + 20] = max(0, min(255, entry.type1))
+            blob[off + 21] = max(0, min(255, entry.type2))
+            blob[off + 23] = max(0, min(255, entry.iq_group))
+            blob[off + 24] = max(0, min(255, entry.ability1))
+            blob[off + 25] = max(0, min(255, entry.ability2))
+            struct.pack_into("<H", blob, off + 26, max(0, min(0xFFFF, entry.flags)))
+            struct.pack_into("<H", blob, off + 28, max(0, min(0xFFFF, entry.exp_yield)))
+            struct.pack_into("<h", blob, off + 30, max(-32768, min(32767, entry.recruit_rate1)))
+            struct.pack_into("<H", blob, off + 32, max(1, min(0xFFFF, entry.base_hp)))
+            struct.pack_into("<h", blob, off + 34, max(-32768, min(32767, entry.recruit_rate2)))
+            blob[off + 36] = max(1, min(255, entry.base_atk))
+            blob[off + 37] = max(1, min(255, entry.base_spatk))
+            blob[off + 38] = max(1, min(255, entry.base_def))
+            blob[off + 39] = max(1, min(255, entry.base_spdef))
+            struct.pack_into("<H", blob, off + 42, max(1, min(0xFFFF, entry.size)))
+
+        return bytes(blob)
