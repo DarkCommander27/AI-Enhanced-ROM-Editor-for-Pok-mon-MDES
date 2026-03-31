@@ -270,7 +270,7 @@ class PokemonEditorTab(ttk.Frame):
         # Apply button
         ttk.Button(
             right, text="Apply Changes", command=self._apply_changes
-        ).grid(row=row, column=0, columnspan=2, pady=8)
+        ).grid(row=row, column=0, columnspan=2, sticky="ew", pady=8)
 
     # ------------------------------------------------------------------
     # Event handlers

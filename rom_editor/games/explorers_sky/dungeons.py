@@ -160,9 +160,20 @@ class DungeonEntry:
 class DungeonTable:
     """Collection of all dungeon entries loaded from the EoS NARC."""
 
-    def __init__(self, entries: list[DungeonEntry], raw_files: list[bytes]) -> None:
+    def __init__(
+        self,
+        entries: list[DungeonEntry],
+        raw_files: list[bytes],
+        record_size: Optional[int] = None,
+    ) -> None:
         self._entries = entries
         self._raw_files = raw_files
+        if record_size is not None:
+            self._record_size = record_size
+        elif raw_files:
+            self._record_size = len(raw_files[0])
+        else:
+            self._record_size = _HEADER_SIZE
 
     @classmethod
     def from_narc(cls, narc: NARC) -> "DungeonTable":
@@ -174,6 +185,97 @@ class DungeonTable:
             if len(raw) >= _HEADER_SIZE:
                 entries.append(DungeonEntry.from_bytes(i, raw))
         return cls(entries, raw_files)
+
+    @classmethod
+    def from_flat_bytes(
+        cls,
+        data: bytes,
+        record_size: Optional[int] = None,
+    ) -> "DungeonTable":
+        """Parse non-NARC dungeon data stored as fixed-size records."""
+        if len(data) < _HEADER_SIZE:
+            raise ValueError(
+                f"Flat dungeon data too short: {len(data)} < {_HEADER_SIZE}"
+            )
+
+        rec_size = record_size or cls._infer_record_size(data)
+        if rec_size is None:
+            raise ValueError(
+                "Could not infer non-NARC dungeon record size from DUNGEON.BIN"
+            )
+        if rec_size < _HEADER_SIZE:
+            raise ValueError(
+                f"Invalid flat dungeon record size: {rec_size} < {_HEADER_SIZE}"
+            )
+
+        count = len(data) // rec_size
+        if count == 0:
+            raise ValueError("Flat dungeon data has zero records")
+
+        raw_files: list[bytes] = []
+        entries: list[DungeonEntry] = []
+        for i in range(count):
+            off = i * rec_size
+            raw = data[off:off + rec_size]
+            raw_files.append(raw)
+            entries.append(DungeonEntry.from_bytes(i, raw))
+
+        return cls(entries, raw_files, record_size=rec_size)
+
+    @staticmethod
+    def _infer_record_size(data: bytes) -> Optional[int]:
+        """Infer fixed record size for flat DUNGEON.BIN variants."""
+        candidates: list[int] = []
+
+        num_known = len(DUNGEON_NAMES)
+        if num_known > 0 and len(data) % num_known == 0:
+            guessed = len(data) // num_known
+            if guessed >= _HEADER_SIZE:
+                candidates.append(guessed)
+
+        for size in (_HEADER_SIZE, 0x80, 0x90, 0xA0, 0xC0, 0x100, 0x120, 0x140):
+            if len(data) % size == 0:
+                candidates.append(size)
+
+        # Keep order stable while deduplicating.
+        uniq: list[int] = []
+        for c in candidates:
+            if c not in uniq:
+                uniq.append(c)
+        if not uniq:
+            return None
+
+        def score(size: int) -> float:
+            count = len(data) // size
+            checks = min(count, 24)
+            if checks == 0:
+                return -1.0
+            ok = 0
+            for i in range(checks):
+                off = i * size
+                hdr = data[off:off + _HEADER_SIZE]
+                if len(hdr) < _HEADER_SIZE:
+                    continue
+                try:
+                    e = DungeonEntry.from_bytes(i, hdr)
+                except Exception:
+                    continue
+                if 1 <= e.num_floors <= 99:
+                    ok += 1
+                if 0 <= e.darkness <= 2:
+                    ok += 1
+                if 0 <= e.weather <= 10:
+                    ok += 1
+                if 0 <= e.monster_house_chance <= 100:
+                    ok += 1
+                if 0 <= e.item_density <= 100:
+                    ok += 1
+                if 0 <= e.trap_density <= 100:
+                    ok += 1
+            return ok / (checks * 6)
+
+        best = max(uniq, key=score)
+        return best
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -196,3 +298,12 @@ class DungeonTable:
             if entry.index < narc.num_files:
                 full_raw = self._raw_files[entry.index]
                 narc[entry.index].data = bytearray(entry.to_bytes(full_raw))
+
+    def to_flat_bytes(self) -> bytes:
+        """Serialize back to fixed-size flat record format."""
+        out = bytearray()
+        for entry in self._entries:
+            if entry.index < len(self._raw_files):
+                full_raw = self._raw_files[entry.index]
+                out.extend(entry.to_bytes(full_raw))
+        return bytes(out)

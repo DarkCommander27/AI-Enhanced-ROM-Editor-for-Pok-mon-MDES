@@ -5,7 +5,8 @@ https://projectpokemon.org/home/forums/topic/62264-pmd-explorers-of-sky-data-res
 https://github.com/SkyTemple/skytemple
 
 Game codes:
-  US: YOTE  EU: YOTJ  JP: YOTK
+    US: YOTE  EU: YOTJ  JP: YOTK
+    C2SE: common code used by some ROM dumps/patches based on EoS
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # Game code identifiers
 # ---------------------------------------------------------------------------
-GAME_CODES = {"YOTE", "YOTJ", "YOTK"}
+GAME_CODES = {"YOTE", "YOTJ", "YOTK", "C2SE"}
 
 # ---------------------------------------------------------------------------
 # NARC file paths within the ROM

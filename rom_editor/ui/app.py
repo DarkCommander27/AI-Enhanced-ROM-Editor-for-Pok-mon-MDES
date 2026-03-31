@@ -54,11 +54,16 @@ class ROMEditorApp(tk.Tk):
         self.geometry(WINDOW_SIZE)
         self.minsize(900, 600)
 
+        self._style = ttk.Style(self)
+        self._apply_friendly_theme()
+
         self._rom: Optional[NDSRom] = None
         self._pokemon_table: Optional[PokemonTable] = None
         self._move_table: Optional[MoveTable] = None
         self._dungeon_table: Optional[DungeonTable] = None
         self._learnset_table: Optional[WazaLearnsetTable] = None
+        self._move_data_is_narc = True
+        self._dungeon_data_is_narc = True
         self._assistant = AIAssistant()
         self._modified = False
         self._autosave_job: Optional[str] = None
@@ -83,6 +88,36 @@ class ROMEditorApp(tk.Tk):
         self._apply_neuro_mode(initial=True)
 
         self._update_ui_state()
+
+    def _apply_friendly_theme(self) -> None:
+        """Apply a calm, readable theme that stays approachable."""
+        try:
+            if "clam" in self._style.theme_names():
+                self._style.theme_use("clam")
+        except Exception:
+            pass
+
+        self.configure(bg="#f4f7fb")
+
+        self._style.configure("TFrame", background="#f4f7fb")
+        self._style.configure("TLabel", background="#f4f7fb")
+        self._style.configure("Toolbar.TFrame", background="#e7eef9")
+        self._style.configure("Guide.TFrame", background="#e8f6ef")
+        self._style.configure("Status.TFrame", background="#e9eef5")
+        self._style.configure("Changes.TFrame", background="#edf2f9")
+
+        self._style.configure("TButton", padding=(10, 6))
+        self._style.configure("Accent.TButton", padding=(12, 6))
+        self._style.map(
+            "Accent.TButton",
+            background=[("active", "#5f87bc"), ("!active", "#7299cc")],
+            foreground=[("!disabled", "white")],
+        )
+
+        self._style.configure("TNotebook", background="#f4f7fb", borderwidth=0)
+        self._style.configure("TNotebook.Tab", padding=(12, 7))
+
+        self.option_add("*Listbox.font", "TkDefaultFont 10")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -155,24 +190,24 @@ class ROMEditorApp(tk.Tk):
         self.config(menu=menubar)
 
     def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self, relief="groove")
+        bar = ttk.Frame(self, relief="groove", style="Toolbar.TFrame")
         bar.pack(side="top", fill="x")
 
-        ttk.Button(bar, text="Open ROM", command=self._open_rom).pack(
+        ttk.Button(bar, text="Open ROM", command=self._open_rom, style="Accent.TButton").pack(
             side="left", padx=2, pady=2)
-        ttk.Button(bar, text="Save ROM", command=self._save_rom).pack(
+        ttk.Button(bar, text="Save ROM", command=self._save_rom, style="Accent.TButton").pack(
             side="left", padx=2, pady=2)
 
         self._mode_btn = ttk.Button(
-            bar, text="Simple Mode", command=self._toggle_mode, width=14)
+            bar, text="Simple Mode", command=self._toggle_mode)
         self._mode_btn.pack(side="left", padx=(8, 2), pady=2)
 
         self._neuro_btn = ttk.Button(
-            bar, text="Neuro Mode: On", command=self._toggle_neuro_mode, width=14)
+            bar, text="Neuro Mode: On", command=self._toggle_neuro_mode)
         self._neuro_btn.pack(side="left", padx=(4, 2), pady=2)
 
         self._focus_btn = ttk.Button(
-            bar, text="Focus Assist: Off", command=self._toggle_focus_assist, width=16)
+            bar, text="Focus Assist: Off", command=self._toggle_focus_assist)
         self._focus_btn.pack(side="left", padx=(4, 2), pady=2)
 
         self._rom_label = ttk.Label(bar, text="No ROM loaded", foreground="grey")
@@ -180,7 +215,7 @@ class ROMEditorApp(tk.Tk):
 
     def _build_guidance_bar(self) -> None:
         """A low-pressure, step-by-step hint bar for the current workflow."""
-        bar = ttk.Frame(self, relief="ridge")
+        bar = ttk.Frame(self, relief="ridge", style="Guide.TFrame")
         bar.pack(side="top", fill="x")
         self._guide_var = tk.StringVar()
         ttk.Label(
@@ -328,7 +363,7 @@ class ROMEditorApp(tk.Tk):
         self._notebook.add(self._validation_tab, text="Validation")
 
     def _build_statusbar(self) -> None:
-        bar = ttk.Frame(self, relief="sunken")
+        bar = ttk.Frame(self, relief="sunken", style="Status.TFrame")
         bar.pack(side="bottom", fill="x")
         self._status_var = tk.StringVar(value="Ready")
         ttk.Label(bar, textvariable=self._status_var, anchor="w").pack(
@@ -336,7 +371,7 @@ class ROMEditorApp(tk.Tk):
 
     def _build_changes_panel(self) -> None:
         """Collapsible panel at the bottom showing a log of all edits."""
-        self._changes_outer = ttk.Frame(self, relief="groove")
+        self._changes_outer = ttk.Frame(self, relief="groove", style="Changes.TFrame")
         self._changes_outer.pack(side="bottom", fill="x")
 
         header = ttk.Frame(self._changes_outer)
@@ -441,19 +476,42 @@ class ROMEditorApp(tk.Tk):
 
         # Move data
         if rom.has_file(MOVE_DATA_NARC):
-            narc = NARC.from_bytes(rom.read_file(MOVE_DATA_NARC))
-            self._move_table = MoveTable.from_narc(narc)
-            self._move_editor.load_table(self._move_table)
+            move_raw = rom.read_file(MOVE_DATA_NARC)
+            if move_raw[:4] == b"NARC":
+                narc = NARC.from_bytes(move_raw)
+                self._move_table = MoveTable.from_narc(narc)
+                self._move_data_is_narc = True
+                self._move_editor.load_table(self._move_table)
+            else:
+                # Some EoS variants store this as a flat table blob.
+                self._move_table = MoveTable.from_bytes(move_raw)
+                self._move_data_is_narc = False
+                self._move_editor.load_table(self._move_table)
+                self._status(
+                    f"Loaded {MOVE_DATA_NARC} as raw move table (non-NARC format)."
+                )
         else:
             self._move_table = None
+            self._move_data_is_narc = True
 
         # Dungeon data
         if rom.has_file(DUNGEON_DATA_NARC):
-            narc = NARC.from_bytes(rom.read_file(DUNGEON_DATA_NARC))
-            self._dungeon_table = DungeonTable.from_narc(narc)
-            self._dungeon_editor.load_table(self._dungeon_table)
+            dungeon_raw = rom.read_file(DUNGEON_DATA_NARC)
+            if dungeon_raw[:4] == b"NARC":
+                narc = NARC.from_bytes(dungeon_raw)
+                self._dungeon_table = DungeonTable.from_narc(narc)
+                self._dungeon_data_is_narc = True
+                self._dungeon_editor.load_table(self._dungeon_table)
+            else:
+                self._dungeon_table = DungeonTable.from_flat_bytes(dungeon_raw)
+                self._dungeon_data_is_narc = False
+                self._dungeon_editor.load_table(self._dungeon_table)
+                self._status(
+                    f"Loaded {DUNGEON_DATA_NARC} as flat dungeon table (non-NARC format)."
+                )
         else:
             self._dungeon_table = None
+            self._dungeon_data_is_narc = True
 
         # Portrait data (kaomado.bin) — optional, fails gracefully
         if rom.has_file(PORTRAIT_DATA):
@@ -529,14 +587,20 @@ class ROMEditorApp(tk.Tk):
                 rom.write_file(POKEMON_DATA_NARC, narc.to_bytes())
 
         if self._move_table and rom.has_file(MOVE_DATA_NARC):
-            narc = NARC.from_bytes(rom.read_file(MOVE_DATA_NARC))
-            self._move_table.write_to_narc(narc)
-            rom.write_file(MOVE_DATA_NARC, narc.to_bytes())
+            if self._move_data_is_narc:
+                narc = NARC.from_bytes(rom.read_file(MOVE_DATA_NARC))
+                self._move_table.write_to_narc(narc)
+                rom.write_file(MOVE_DATA_NARC, narc.to_bytes())
+            else:
+                rom.write_file(MOVE_DATA_NARC, self._move_table.to_bytes())
 
         if self._dungeon_table and rom.has_file(DUNGEON_DATA_NARC):
-            narc = NARC.from_bytes(rom.read_file(DUNGEON_DATA_NARC))
-            self._dungeon_table.write_to_narc(narc)
-            rom.write_file(DUNGEON_DATA_NARC, narc.to_bytes())
+            if self._dungeon_data_is_narc:
+                narc = NARC.from_bytes(rom.read_file(DUNGEON_DATA_NARC))
+                self._dungeon_table.write_to_narc(narc)
+                rom.write_file(DUNGEON_DATA_NARC, narc.to_bytes())
+            else:
+                rom.write_file(DUNGEON_DATA_NARC, self._dungeon_table.to_flat_bytes())
 
         if self._learnset_table and rom.has_file(MOVE_LEARNSET_NARC):
             # Safe path: keep a backup and restore if writing learnsets fails.

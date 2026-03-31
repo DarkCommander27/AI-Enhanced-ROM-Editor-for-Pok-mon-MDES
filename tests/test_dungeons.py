@@ -97,3 +97,28 @@ class TestDungeonTable:
         entry = table.get_by_name(name)
         assert entry is not None
         assert entry.index == 0
+
+    def test_from_flat_bytes_header_sized_records(self):
+        raws = [_make_dungeon_raw(num_floors=20 + i) for i in range(4)]
+        blob = b"".join(raws)
+
+        table = DungeonTable.from_flat_bytes(blob, record_size=_HEADER_SIZE)
+        assert len(table) == 4
+        assert table[0].num_floors == 20
+        assert table[3].num_floors == 23
+
+    def test_flat_roundtrip_preserves_record_size(self):
+        rec_size = 0x80
+        raws = []
+        for i in range(3):
+            hdr = _make_dungeon_raw(num_floors=30 + i)
+            raws.append(hdr + (b"\xAA" * (rec_size - _HEADER_SIZE)))
+        blob = b"".join(raws)
+
+        table = DungeonTable.from_flat_bytes(blob, record_size=rec_size)
+        table[1].num_floors = 55
+        out = table.to_flat_bytes()
+
+        assert len(out) == len(blob)
+        reparsed = DungeonTable.from_flat_bytes(out, record_size=rec_size)
+        assert reparsed[1].num_floors == 55

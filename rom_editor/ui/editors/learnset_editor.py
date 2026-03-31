@@ -138,11 +138,23 @@ class LearnsetEditorTab(ttk.Frame):
         self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
         btns = ttk.Frame(right)
-        btns.grid(row=4, column=0, sticky="w", pady=6)
-        ttk.Button(btns, text="Move Up", command=self._move_selected_up).pack(side="left", padx=(0, 4))
-        ttk.Button(btns, text="Move Down", command=self._move_selected_down).pack(side="left", padx=(0, 8))
-        ttk.Button(btns, text="Apply Learnset", command=self._apply).pack(side="left", padx=(0, 6))
-        ttk.Button(btns, text="Reload Entry", command=self._reload_current).pack(side="left")
+        btns.grid(row=4, column=0, sticky="ew", pady=6)
+        btns.columnconfigure(0, weight=1)
+        btns.columnconfigure(1, weight=1)
+        btns.columnconfigure(2, weight=1)
+        btns.columnconfigure(3, weight=1)
+        ttk.Button(btns, text="Move Up", command=self._move_selected_up).grid(
+            row=0, column=0, sticky="ew", padx=(0, 4)
+        )
+        ttk.Button(btns, text="Move Down", command=self._move_selected_down).grid(
+            row=0, column=1, sticky="ew", padx=(0, 8)
+        )
+        ttk.Button(btns, text="Apply Learnset", command=self._apply).grid(
+            row=0, column=2, sticky="ew", padx=(0, 6)
+        )
+        ttk.Button(btns, text="Reload Entry", command=self._reload_current).grid(
+            row=0, column=3, sticky="ew"
+        )
 
         self._auto_fit_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(

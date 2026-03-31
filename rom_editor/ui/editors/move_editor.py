@@ -187,7 +187,7 @@ class MoveEditorTab(ttk.Frame):
 
         ttk.Button(right, text="Apply Changes",
                    command=self._apply_changes).grid(
-            row=row, column=0, columnspan=2, pady=8)
+            row=row, column=0, columnspan=2, sticky="ew", pady=8)
 
     def _on_search(self, *_args) -> None:
         q = self._search_var.get().lower()

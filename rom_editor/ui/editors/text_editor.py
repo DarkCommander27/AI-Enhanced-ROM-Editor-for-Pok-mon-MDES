@@ -84,12 +84,14 @@ class TextEditorTab(ttk.Frame):
         text_sb.grid(row=0, column=1, sticky="ns")
 
         btn_row = ttk.Frame(right)
-        btn_row.grid(row=3, column=0, sticky="w", pady=6)
-        ttk.Button(btn_row, text="Apply to File", command=self._apply_current).pack(
-            side="left", padx=(0, 6)
+        btn_row.grid(row=3, column=0, sticky="ew", pady=6)
+        btn_row.columnconfigure(0, weight=1)
+        btn_row.columnconfigure(1, weight=1)
+        ttk.Button(btn_row, text="Apply to File", command=self._apply_current).grid(
+            row=0, column=0, sticky="ew", padx=(0, 6)
         )
-        ttk.Button(btn_row, text="Revert File", command=self._revert_current).pack(
-            side="left"
+        ttk.Button(btn_row, text="Revert File", command=self._revert_current).grid(
+            row=0, column=1, sticky="ew"
         )
 
     def load_rom(self, rom: NDSRom) -> None:
