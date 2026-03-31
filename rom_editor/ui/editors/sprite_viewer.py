@@ -36,6 +36,12 @@ class SpriteViewer(ttk.LabelFrame):
 
         self._photo: Optional["ImageTk.PhotoImage"] = None
         self._image: Optional["Image.Image"] = None
+        self._theme_colors = {
+            "canvas_bg": "#2a2a2a",
+            "panel_soft_2": "#555",
+            "text_muted": "#666",
+            "text": "#f0f0f0",
+        }
 
         # Canvas (or fallback label)
         if _HAS_PIL:
@@ -43,9 +49,9 @@ class SpriteViewer(ttk.LabelFrame):
                 self,
                 width=_CANVAS_SIZE,
                 height=_CANVAS_SIZE,
-                bg="#2a2a2a",
+                bg=self._theme_colors["canvas_bg"],
                 highlightthickness=1,
-                highlightbackground="#555",
+                highlightbackground=self._theme_colors["panel_soft_2"],
             )
             self._canvas.pack(padx=4, pady=(4, 2))
             self._set_placeholder()
@@ -94,6 +100,18 @@ class SpriteViewer(ttk.LabelFrame):
         """Return the currently selected emotion index."""
         return self._emotion_var.get()
 
+    def set_theme(self, colors: dict[str, str]) -> None:
+        """Apply app theme colors to the preview widget."""
+        self._theme_colors.update(colors)
+        if not _HAS_PIL:
+            return
+        self._canvas.configure(
+            bg=self._theme_colors.get("canvas_bg", "#2a2a2a"),
+            highlightbackground=self._theme_colors.get("panel_soft_2", "#555"),
+            highlightcolor=self._theme_colors.get("accent", "#8e6bff"),
+        )
+        self.set_portrait(self._image)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -102,7 +120,7 @@ class SpriteViewer(ttk.LabelFrame):
         self._canvas.create_text(
             _CANVAS_SIZE // 2, _CANVAS_SIZE // 2,
             text="No portrait",
-            fill="#666",
+            fill=self._theme_colors.get("text_muted", "#666"),
             font=("TkDefaultFont", 8),
         )
         self._photo = None

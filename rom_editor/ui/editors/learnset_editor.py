@@ -84,7 +84,7 @@ class LearnsetEditorTab(ttk.Frame):
         ttk.Label(
             right,
             text="Use dropdowns to add or edit level-up moves.",
-            foreground="#7a4f1f",
+            style="Hint.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(0, 4))
 
         edit_row = ttk.Frame(right)

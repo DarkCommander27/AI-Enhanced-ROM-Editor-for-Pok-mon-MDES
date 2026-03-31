@@ -69,7 +69,7 @@ class TextEditorTab(ttk.Frame):
                 "Raw mode: saves with latin-1 and keeps original byte size. "
                 "Longer text is rejected."
             ),
-            foreground="#7a4f1f",
+            style="Hint.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(0, 4))
 
         text_frame = ttk.Frame(right)

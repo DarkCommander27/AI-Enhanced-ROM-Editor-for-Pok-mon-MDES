@@ -106,26 +106,29 @@ class ROMEditorApp(tk.Tk):
 
         palettes = {
             "dark": {
-                "bg": "#0e0e12",
-                "surface": "#171722",
-                "panel": "#1d1d2d",
-                "panel_soft": "#2a2a42",
-                "text": "#ececf7",
-                "text_muted": "#b8b8d6",
-                "accent": "#8e6bff",
-                "accent_active": "#a084ff",
-                "menu_bg": "#171722",
-                "guide_text": "#d4c7ff",
-                "warning_text": "#f0b56b",
-                "status_dim": "#b8b8d6",
-                "entry_fg": "#ececf7",
-                "entry_bg": "#1d1d2d",
+                "bg": "#09090d",
+                "surface": "#12121a",
+                "panel": "#171725",
+                "panel_soft": "#23233a",
+                "panel_soft_2": "#2d2d4a",
+                "text": "#f4f1ff",
+                "text_muted": "#b0abd0",
+                "accent": "#8b5cf6",
+                "accent_active": "#a78bfa",
+                "menu_bg": "#101017",
+                "guide_text": "#ddd3ff",
+                "warning_text": "#f4c27a",
+                "status_dim": "#c3bfe1",
+                "entry_fg": "#f4f1ff",
+                "entry_bg": "#141421",
+                "canvas_bg": "#101018",
             },
             "light": {
                 "bg": "#f4f6fb",
                 "surface": "#e8ecf7",
                 "panel": "#ffffff",
                 "panel_soft": "#d2daf0",
+                "panel_soft_2": "#c3ccee",
                 "text": "#1f2340",
                 "text_muted": "#596089",
                 "accent": "#6a4dff",
@@ -136,6 +139,7 @@ class ROMEditorApp(tk.Tk):
                 "status_dim": "#6b7398",
                 "entry_fg": "#1f2340",
                 "entry_bg": "#ffffff",
+                "canvas_bg": "#eef2ff",
             },
         }
         colors = palettes["light" if mode == "light" else "dark"]
@@ -145,47 +149,77 @@ class ROMEditorApp(tk.Tk):
         surface = colors["surface"]
         panel = colors["panel"]
         panel_soft = colors["panel_soft"]
+        panel_soft_2 = colors["panel_soft_2"]
         text = colors["text"]
         text_muted = colors["text_muted"]
         accent = colors["accent"]
         accent_active = colors["accent_active"]
 
         self.configure(bg=bg)
+        base_font = ("Segoe UI", 10) if sys.platform.startswith("win") else ("TkDefaultFont", 10)
+        small_font = ("Segoe UI", 9) if sys.platform.startswith("win") else ("TkDefaultFont", 9)
+        heading_font = ("Segoe UI Semibold", 10) if sys.platform.startswith("win") else ("TkDefaultFont", 10, "bold")
 
         self._style.configure("TFrame", background=bg)
         self._style.configure("TLabel", background=bg, foreground=text)
-        self._style.configure("TLabelframe", background=bg, bordercolor=panel_soft)
+        self._style.configure(
+            "TLabelframe",
+            background=bg,
+            bordercolor=panel_soft_2,
+            relief="flat",
+            borderwidth=1,
+            padding=10,
+        )
         self._style.configure("TLabelframe.Label", background=bg, foreground=text)
-
+        self._style.configure("Hint.TLabel", background=bg, foreground=colors["guide_text"])
+        self._style.configure("Muted.TLabel", background=bg, foreground=text_muted)
         self._style.configure("Toolbar.TFrame", background=surface)
+        self._style.configure("ToolbarGroup.TFrame", background=surface)
         self._style.configure("Guide.TFrame", background=panel)
         self._style.configure("Status.TFrame", background=surface)
         self._style.configure("Changes.TFrame", background=surface)
+        self._style.configure("Panel.TFrame", background=panel)
+        self._style.configure("TSeparator", background=panel_soft_2)
 
         self._style.configure(
             "TButton",
-            padding=(10, 6),
+            padding=(14, 9),
             background=panel,
             foreground=text,
-            bordercolor=panel_soft,
+            bordercolor=panel_soft_2,
+            relief="flat",
+            borderwidth=1,
             lightcolor=panel,
             darkcolor=panel,
+            focuscolor=accent,
         )
         self._style.map(
             "TButton",
             background=[("active", panel_soft), ("pressed", accent)],
             foreground=[("disabled", text_muted), ("!disabled", text)],
-            bordercolor=[("focus", accent), ("!focus", panel_soft)],
+            bordercolor=[("focus", accent), ("!focus", panel_soft_2)],
         )
 
-        self._style.configure("Accent.TButton", padding=(12, 6), background=accent)
+        self._style.configure(
+            "Accent.TButton",
+            padding=(16, 10),
+            background=accent,
+            bordercolor=accent,
+            relief="flat",
+        )
         self._style.map(
             "Accent.TButton",
             background=[("active", accent_active), ("!active", accent)],
             foreground=[("!disabled", "#ffffff")],
         )
 
-        self._style.configure("TCheckbutton", background=bg, foreground=text)
+        self._style.configure(
+            "TCheckbutton",
+            background=bg,
+            foreground=text,
+            padding=(4, 4),
+            font=base_font,
+        )
         self._style.map(
             "TCheckbutton",
             foreground=[("disabled", text_muted), ("!disabled", text)],
@@ -193,17 +227,34 @@ class ROMEditorApp(tk.Tk):
         )
 
         self._style.configure(
+            "TEntry",
+            fieldbackground=panel,
+            background=panel,
+            foreground=colors["entry_fg"],
+            insertcolor=accent,
+            bordercolor=panel_soft_2,
+            relief="flat",
+            padding=7,
+        )
+        self._style.map(
+            "TEntry",
+            bordercolor=[("focus", accent), ("!focus", panel_soft_2)],
+        )
+
+        self._style.configure(
             "TCombobox",
             fieldbackground=panel,
             background=panel,
             foreground=colors["entry_fg"],
             arrowcolor=text,
-            bordercolor=panel_soft,
+            bordercolor=panel_soft_2,
+            relief="flat",
+            padding=6,
         )
         self._style.map(
             "TCombobox",
             fieldbackground=[("readonly", panel), ("focus", panel_soft)],
-            bordercolor=[("focus", accent), ("!focus", panel_soft)],
+            bordercolor=[("focus", accent), ("!focus", panel_soft_2)],
         )
 
         self._style.configure(
@@ -212,12 +263,14 @@ class ROMEditorApp(tk.Tk):
             background=panel,
             foreground=colors["entry_fg"],
             arrowcolor=text,
-            bordercolor=panel_soft,
+            bordercolor=panel_soft_2,
+            relief="flat",
+            padding=4,
         )
         self._style.map(
             "TSpinbox",
             fieldbackground=[("focus", panel_soft), ("!focus", panel)],
-            bordercolor=[("focus", accent), ("!focus", panel_soft)],
+            bordercolor=[("focus", accent), ("!focus", panel_soft_2)],
         )
 
         self._style.configure(
@@ -225,7 +278,8 @@ class ROMEditorApp(tk.Tk):
             background=panel,
             fieldbackground=panel,
             foreground=text,
-            bordercolor=panel_soft,
+            bordercolor=panel_soft_2,
+            rowheight=28,
         )
         self._style.map(
             "Treeview",
@@ -236,15 +290,19 @@ class ROMEditorApp(tk.Tk):
             "Treeview.Heading",
             background=panel_soft,
             foreground=text,
-            bordercolor=panel_soft,
+            bordercolor=panel_soft_2,
+            relief="flat",
+            padding=(8, 8),
+            font=heading_font,
         )
 
         self._style.configure("TNotebook", background=bg, borderwidth=0)
         self._style.configure(
             "TNotebook.Tab",
-            padding=(12, 7),
+            padding=(16, 10),
             background=surface,
             foreground=text_muted,
+            font=base_font,
         )
         self._style.map(
             "TNotebook.Tab",
@@ -260,21 +318,25 @@ class ROMEditorApp(tk.Tk):
             bordercolor=surface,
         )
 
-        self.option_add("*Listbox.font", "TkDefaultFont 10")
+        self.option_add("*Font", base_font)
+        self.option_add("*Menu.font", base_font)
+        self.option_add("*Listbox.font", base_font)
         self.option_add("*Listbox.background", colors["entry_bg"])
         self.option_add("*Listbox.foreground", colors["entry_fg"])
         self.option_add("*Listbox.selectBackground", accent)
         self.option_add("*Listbox.selectForeground", "#ffffff")
-        self.option_add("*Listbox.highlightBackground", panel_soft)
+        self.option_add("*Listbox.highlightBackground", panel_soft_2)
         self.option_add("*Listbox.highlightColor", accent)
+        self.option_add("*Listbox.borderWidth", 0)
 
         self.option_add("*Text.background", colors["entry_bg"])
         self.option_add("*Text.foreground", colors["entry_fg"])
         self.option_add("*Text.insertBackground", accent)
         self.option_add("*Text.selectBackground", accent)
         self.option_add("*Text.selectForeground", "#ffffff")
-        self.option_add("*Text.highlightBackground", panel_soft)
+        self.option_add("*Text.highlightBackground", panel_soft_2)
         self.option_add("*Text.highlightColor", accent)
+        self.option_add("*Text.font", small_font)
 
         self._apply_menu_theme()
 
@@ -317,7 +379,56 @@ class ROMEditorApp(tk.Tk):
             self._guide_label.configure(foreground=guide_text, background=panel)
         if hasattr(self, "_validation_hint"):
             self._validation_hint.configure(foreground=warning_text)
+        self._refresh_plain_tk_widgets(self)
         self._apply_menu_theme()
+
+    def _refresh_plain_tk_widgets(self, widget: tk.Misc) -> None:
+        """Apply theme colors to classic Tk widgets after creation."""
+        if not self._theme_colors:
+            return
+        colors = self._theme_colors
+        panel_soft_2 = colors["panel_soft_2"]
+        accent = colors["accent"]
+
+        for child in widget.winfo_children():
+            try:
+                if isinstance(child, tk.Listbox):
+                    child.configure(
+                        bg=colors["entry_bg"],
+                        fg=colors["entry_fg"],
+                        selectbackground=accent,
+                        selectforeground="#ffffff",
+                        highlightbackground=panel_soft_2,
+                        highlightcolor=accent,
+                        activestyle="none",
+                        bd=0,
+                        relief="flat",
+                    )
+                elif isinstance(child, tk.Text):
+                    child.configure(
+                        bg=colors["entry_bg"],
+                        fg=colors["entry_fg"],
+                        insertbackground=accent,
+                        selectbackground=accent,
+                        selectforeground="#ffffff",
+                        highlightbackground=panel_soft_2,
+                        highlightcolor=accent,
+                        bd=0,
+                        relief="flat",
+                    )
+                elif isinstance(child, tk.Canvas):
+                    child.configure(
+                        bg=colors["canvas_bg"],
+                        highlightbackground=panel_soft_2,
+                        highlightcolor=accent,
+                    )
+                else:
+                    set_theme = getattr(child, "set_theme", None)
+                    if callable(set_theme):
+                        set_theme(colors)
+            except Exception:
+                pass
+            self._refresh_plain_tk_widgets(child)
 
     def _on_theme_changed(self) -> None:
         """Apply and persist theme choice from Settings menu."""
@@ -418,44 +529,47 @@ class ROMEditorApp(tk.Tk):
 
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self, relief="groove", style="Toolbar.TFrame")
-        bar.pack(side="top", fill="x")
+        bar.pack(side="top", fill="x", padx=10, pady=(10, 6))
 
-        ttk.Button(bar, text="Open ROM", command=self._open_rom, style="Accent.TButton").pack(
-            side="left", padx=2, pady=2)
-        ttk.Button(bar, text="Save ROM", command=self._save_rom, style="Accent.TButton").pack(
-            side="left", padx=2, pady=2)
+        left = ttk.Frame(bar, style="ToolbarGroup.TFrame")
+        left.pack(side="left", fill="x", expand=True, padx=8, pady=8)
 
-        self._mode_btn = ttk.Button(
-            bar, text="Simple Mode", command=self._toggle_mode)
-        self._mode_btn.pack(side="left", padx=(8, 2), pady=2)
+        ttk.Button(left, text="Open ROM", command=self._open_rom, style="Accent.TButton").pack(
+            side="left", padx=(0, 8))
+        ttk.Button(left, text="Save ROM", command=self._save_rom, style="Accent.TButton").pack(
+            side="left", padx=(0, 18))
 
-        self._neuro_btn = ttk.Button(
-            bar, text="Neuro Mode: On", command=self._toggle_neuro_mode)
-        self._neuro_btn.pack(side="left", padx=(4, 2), pady=2)
+        self._mode_btn = ttk.Button(left, text="Simple Mode", command=self._toggle_mode)
+        self._mode_btn.pack(side="left", padx=(0, 8))
 
-        self._focus_btn = ttk.Button(
-            bar, text="Focus Assist: Off", command=self._toggle_focus_assist)
-        self._focus_btn.pack(side="left", padx=(4, 2), pady=2)
+        self._neuro_btn = ttk.Button(left, text="Neuro Mode: On", command=self._toggle_neuro_mode)
+        self._neuro_btn.pack(side="left", padx=(0, 8))
 
-        self._rom_label = ttk.Label(bar, text="No ROM loaded", foreground="grey")
-        self._rom_label.pack(side="left", padx=12)
+        self._focus_btn = ttk.Button(left, text="Focus Assist: Off", command=self._toggle_focus_assist)
+        self._focus_btn.pack(side="left")
+
+        right = ttk.Frame(bar, style="ToolbarGroup.TFrame")
+        right.pack(side="right", padx=10, pady=8)
+        self._rom_label = ttk.Label(right, text="No ROM loaded", style="Muted.TLabel")
+        self._rom_label.pack(side="right")
 
     def _build_guidance_bar(self) -> None:
         """A low-pressure, step-by-step hint bar for the current workflow."""
         bar = ttk.Frame(self, relief="ridge", style="Guide.TFrame")
-        bar.pack(side="top", fill="x")
+        bar.pack(side="top", fill="x", padx=10, pady=(0, 8))
         self._guide_var = tk.StringVar()
         self._guide_label = ttk.Label(
             bar,
             textvariable=self._guide_var,
             anchor="w",
+            style="Hint.TLabel",
         )
-        self._guide_label.pack(side="left", padx=8, pady=3)
+        self._guide_label.pack(side="left", fill="x", expand=True, padx=12, pady=8)
         self._update_guidance()
 
     def _build_notebook(self) -> None:
         self._notebook = ttk.Notebook(self)
-        self._notebook.pack(fill="both", expand=True, padx=4, pady=4)
+        self._notebook.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         # Pokémon tab
         self._pokemon_outer = ttk.Frame(self._notebook)
@@ -591,15 +705,15 @@ class ROMEditorApp(tk.Tk):
 
     def _build_statusbar(self) -> None:
         bar = ttk.Frame(self, relief="sunken", style="Status.TFrame")
-        bar.pack(side="bottom", fill="x")
+        bar.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
         self._status_var = tk.StringVar(value="Ready")
         ttk.Label(bar, textvariable=self._status_var, anchor="w").pack(
-            side="left", padx=6, pady=2)
+            side="left", padx=12, pady=8)
 
     def _build_changes_panel(self) -> None:
         """Collapsible panel at the bottom showing a log of all edits."""
         self._changes_outer = ttk.Frame(self, relief="groove", style="Changes.TFrame")
-        self._changes_outer.pack(side="bottom", fill="x")
+        self._changes_outer.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
 
         header = ttk.Frame(self._changes_outer)
         header.pack(fill="x")
