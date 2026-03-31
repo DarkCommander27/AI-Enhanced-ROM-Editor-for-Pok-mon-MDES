@@ -35,12 +35,16 @@ class WazaLearnsetTable:
         ptr_tbl_offset: int,
         ptr_triples: list[tuple[int, int, int]],
         data_start_offset: int,
+        encoded_lengths: list[tuple[int, int, int]],
+        repack_limit_offset: int,
     ) -> None:
         self._entries = entries
         self._blob = blob
         self._ptr_tbl_offset = ptr_tbl_offset
         self._ptr_triples = ptr_triples
         self._data_start_offset = data_start_offset
+        self._encoded_lengths = encoded_lengths
+        self._repack_limit_offset = repack_limit_offset
 
     @staticmethod
     def _decode_one(it: int, data: bytes) -> tuple[int, int]:
@@ -133,10 +137,12 @@ class WazaLearnsetTable:
             raise ValueError("Could not parse WAZA learnset pointer table")
 
         entries: list[LearnsetEntry] = []
+        encoded_lengths: list[tuple[int, int, int]] = []
         for idx, (p1, p2, p3) in enumerate(triples):
             next_p1 = triples[idx + 1][0] if idx + 1 < len(triples) else ptr_tbl
             if p1 == p2 == p3 == 0:
                 entries.append(LearnsetEntry(index=idx, level_up=[], tmhm=[], egg=[]))
+                encoded_lengths.append((0, 0, 0))
                 continue
 
             if not (0 <= p1 <= p2 <= p3 <= next_p1 <= ptr_tbl):
@@ -152,10 +158,20 @@ class WazaLearnsetTable:
                 raise ValueError(f"Level-up list has odd value count at entry {idx}")
             level_up = [(lvl_vals[i], lvl_vals[i + 1]) for i in range(0, len(lvl_vals), 2)]
             entries.append(LearnsetEntry(index=idx, level_up=level_up, tmhm=tm_vals, egg=egg_vals))
+            encoded_lengths.append((lvl_end - p1, tm_end - p2, egg_end - p3))
 
         nonzero_ptrs = [p for t in triples for p in t if p > 0]
         data_start = min(nonzero_ptrs) if nonzero_ptrs else ptr_tbl
-        return cls(entries, bytearray(data), ptr_tbl, triples, data_start)
+        repack_limit = min(ptr_tbl, sub_ptr) if sub_ptr > data_start else ptr_tbl
+        return cls(
+            entries,
+            bytearray(data),
+            ptr_tbl,
+            triples,
+            data_start,
+            encoded_lengths,
+            repack_limit,
+        )
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -177,13 +193,10 @@ class WazaLearnsetTable:
         for idx, entry in enumerate(self._entries):
             p1, p2, p3 = self._ptr_triples[idx]
             next_p1 = self._ptr_triples[idx + 1][0] if idx + 1 < len(self._ptr_triples) else self._ptr_tbl_offset
+            old_lvl_enc, old_tm_enc, old_egg_enc = self._encoded_lengths[idx]
 
             if p1 == p2 == p3 == 0:
                 continue
-
-            old_lvl_len = p2 - p1
-            old_tm_len = p3 - p2
-            old_egg_len = next_p1 - p3
 
             flat_lvl: list[int] = []
             for move_id, level in entry.level_up:
@@ -194,22 +207,25 @@ class WazaLearnsetTable:
             new_tm = self._encode_list([int(v) for v in entry.tmhm])
             new_egg = self._encode_list([int(v) for v in entry.egg])
 
-            if len(new_lvl) != old_lvl_len:
+            if len(new_lvl) != old_lvl_enc:
                 raise ValueError(
-                    f"Entry {idx}: level-up encoding size changed ({len(new_lvl)} != {old_lvl_len})"
+                    f"Entry {idx}: level-up encoding size changed ({len(new_lvl)} != {old_lvl_enc})"
                 )
-            if len(new_tm) != old_tm_len:
+            if len(new_tm) != old_tm_enc:
                 raise ValueError(
-                    f"Entry {idx}: TM/HM encoding size changed ({len(new_tm)} != {old_tm_len})"
+                    f"Entry {idx}: TM/HM encoding size changed ({len(new_tm)} != {old_tm_enc})"
                 )
-            if len(new_egg) != old_egg_len:
+            if len(new_egg) != old_egg_enc:
                 raise ValueError(
-                    f"Entry {idx}: egg encoding size changed ({len(new_egg)} != {old_egg_len})"
+                    f"Entry {idx}: egg encoding size changed ({len(new_egg)} != {old_egg_enc})"
                 )
 
-            blob[p1:p2] = new_lvl
-            blob[p2:p3] = new_tm
-            blob[p3:next_p1] = new_egg
+            # Preserve any trailing alignment/padding bytes in each pointer span.
+            if p1 + len(new_lvl) > p2 or p2 + len(new_tm) > p3 or p3 + len(new_egg) > next_p1:
+                raise ValueError(f"Entry {idx}: encoded list overflow within pointer bounds")
+            blob[p1:p1 + len(new_lvl)] = new_lvl
+            blob[p2:p2 + len(new_tm)] = new_tm
+            blob[p3:p3 + len(new_egg)] = new_egg
 
         return bytes(blob)
 
@@ -249,15 +265,14 @@ class WazaLearnsetTable:
             packed.extend(enc_tm)
             packed.extend(enc_egg)
 
-        if cursor > self._ptr_tbl_offset:
+        if cursor > self._repack_limit_offset:
             raise ValueError(
                 "Auto-fit overflow: repacked learnsets exceed available space "
-                f"before pointer table ({cursor} > {self._ptr_tbl_offset})"
+                f"before safe limit ({cursor} > {self._repack_limit_offset})"
             )
 
-        # Fill learnset data area with padding and write packed bytes.
-        for i in range(self._data_start_offset, self._ptr_tbl_offset):
-            blob[i] = 0xAA
+        # Write packed bytes without mass-filling the gap so metadata regions
+        # (for example the WAZA subheader) are never clobbered.
         blob[self._data_start_offset:self._data_start_offset + len(packed)] = packed
 
         # Rewrite pointer table entries for parsed rows.

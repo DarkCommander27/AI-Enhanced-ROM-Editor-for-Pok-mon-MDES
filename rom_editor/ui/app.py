@@ -54,8 +54,15 @@ class ROMEditorApp(tk.Tk):
         self.geometry(WINDOW_SIZE)
         self.minsize(900, 600)
 
+        self._settings = self._load_settings()
         self._style = ttk.Style(self)
-        self._apply_friendly_theme()
+        self._theme_mode = tk.StringVar(
+            value=self._settings.get("theme", "dark")
+            if self._settings.get("theme", "dark") in {"light", "dark"}
+            else "dark"
+        )
+        self._theme_colors: dict[str, str] = {}
+        self._apply_theme(self._theme_mode.get())
 
         self._rom: Optional[NDSRom] = None
         self._pokemon_table: Optional[PokemonTable] = None
@@ -69,7 +76,6 @@ class ROMEditorApp(tk.Tk):
         self._autosave_job: Optional[str] = None
         self._history = ChangeHistory(max_size=50)
         self._history.set_on_change(self._on_history_changed)
-        self._settings = self._load_settings()
         self._simple_mode = tk.BooleanVar(value=False)
         self._focus_assist = tk.BooleanVar(value=False)
         self._neuro_mode = tk.BooleanVar(
@@ -86,38 +92,240 @@ class ROMEditorApp(tk.Tk):
 
         # Start in a calmer layout by default.
         self._apply_neuro_mode(initial=True)
+        self._refresh_theme_dependent_widgets()
 
         self._update_ui_state()
 
-    def _apply_friendly_theme(self) -> None:
-        """Apply a calm, readable theme that stays approachable."""
+    def _apply_theme(self, mode: str) -> None:
+        """Apply app theme palette and ttk/tk styling."""
         try:
             if "clam" in self._style.theme_names():
                 self._style.theme_use("clam")
         except Exception:
             pass
 
-        self.configure(bg="#f4f7fb")
+        palettes = {
+            "dark": {
+                "bg": "#0e0e12",
+                "surface": "#171722",
+                "panel": "#1d1d2d",
+                "panel_soft": "#2a2a42",
+                "text": "#ececf7",
+                "text_muted": "#b8b8d6",
+                "accent": "#8e6bff",
+                "accent_active": "#a084ff",
+                "menu_bg": "#171722",
+                "guide_text": "#d4c7ff",
+                "warning_text": "#f0b56b",
+                "status_dim": "#b8b8d6",
+                "entry_fg": "#ececf7",
+                "entry_bg": "#1d1d2d",
+            },
+            "light": {
+                "bg": "#f4f6fb",
+                "surface": "#e8ecf7",
+                "panel": "#ffffff",
+                "panel_soft": "#d2daf0",
+                "text": "#1f2340",
+                "text_muted": "#596089",
+                "accent": "#6a4dff",
+                "accent_active": "#7b63ff",
+                "menu_bg": "#e8ecf7",
+                "guide_text": "#4c2ec9",
+                "warning_text": "#8a4f12",
+                "status_dim": "#6b7398",
+                "entry_fg": "#1f2340",
+                "entry_bg": "#ffffff",
+            },
+        }
+        colors = palettes["light" if mode == "light" else "dark"]
+        self._theme_colors = colors
 
-        self._style.configure("TFrame", background="#f4f7fb")
-        self._style.configure("TLabel", background="#f4f7fb")
-        self._style.configure("Toolbar.TFrame", background="#e7eef9")
-        self._style.configure("Guide.TFrame", background="#e8f6ef")
-        self._style.configure("Status.TFrame", background="#e9eef5")
-        self._style.configure("Changes.TFrame", background="#edf2f9")
+        bg = colors["bg"]
+        surface = colors["surface"]
+        panel = colors["panel"]
+        panel_soft = colors["panel_soft"]
+        text = colors["text"]
+        text_muted = colors["text_muted"]
+        accent = colors["accent"]
+        accent_active = colors["accent_active"]
 
-        self._style.configure("TButton", padding=(10, 6))
-        self._style.configure("Accent.TButton", padding=(12, 6))
+        self.configure(bg=bg)
+
+        self._style.configure("TFrame", background=bg)
+        self._style.configure("TLabel", background=bg, foreground=text)
+        self._style.configure("TLabelframe", background=bg, bordercolor=panel_soft)
+        self._style.configure("TLabelframe.Label", background=bg, foreground=text)
+
+        self._style.configure("Toolbar.TFrame", background=surface)
+        self._style.configure("Guide.TFrame", background=panel)
+        self._style.configure("Status.TFrame", background=surface)
+        self._style.configure("Changes.TFrame", background=surface)
+
+        self._style.configure(
+            "TButton",
+            padding=(10, 6),
+            background=panel,
+            foreground=text,
+            bordercolor=panel_soft,
+            lightcolor=panel,
+            darkcolor=panel,
+        )
         self._style.map(
-            "Accent.TButton",
-            background=[("active", "#5f87bc"), ("!active", "#7299cc")],
-            foreground=[("!disabled", "white")],
+            "TButton",
+            background=[("active", panel_soft), ("pressed", accent)],
+            foreground=[("disabled", text_muted), ("!disabled", text)],
+            bordercolor=[("focus", accent), ("!focus", panel_soft)],
         )
 
-        self._style.configure("TNotebook", background="#f4f7fb", borderwidth=0)
-        self._style.configure("TNotebook.Tab", padding=(12, 7))
+        self._style.configure("Accent.TButton", padding=(12, 6), background=accent)
+        self._style.map(
+            "Accent.TButton",
+            background=[("active", accent_active), ("!active", accent)],
+            foreground=[("!disabled", "#ffffff")],
+        )
+
+        self._style.configure("TCheckbutton", background=bg, foreground=text)
+        self._style.map(
+            "TCheckbutton",
+            foreground=[("disabled", text_muted), ("!disabled", text)],
+            indicatorcolor=[("selected", accent), ("!selected", panel_soft)],
+        )
+
+        self._style.configure(
+            "TCombobox",
+            fieldbackground=panel,
+            background=panel,
+            foreground=colors["entry_fg"],
+            arrowcolor=text,
+            bordercolor=panel_soft,
+        )
+        self._style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", panel), ("focus", panel_soft)],
+            bordercolor=[("focus", accent), ("!focus", panel_soft)],
+        )
+
+        self._style.configure(
+            "TSpinbox",
+            fieldbackground=panel,
+            background=panel,
+            foreground=colors["entry_fg"],
+            arrowcolor=text,
+            bordercolor=panel_soft,
+        )
+        self._style.map(
+            "TSpinbox",
+            fieldbackground=[("focus", panel_soft), ("!focus", panel)],
+            bordercolor=[("focus", accent), ("!focus", panel_soft)],
+        )
+
+        self._style.configure(
+            "Treeview",
+            background=panel,
+            fieldbackground=panel,
+            foreground=text,
+            bordercolor=panel_soft,
+        )
+        self._style.map(
+            "Treeview",
+            background=[("selected", accent)],
+            foreground=[("selected", "#ffffff")],
+        )
+        self._style.configure(
+            "Treeview.Heading",
+            background=panel_soft,
+            foreground=text,
+            bordercolor=panel_soft,
+        )
+
+        self._style.configure("TNotebook", background=bg, borderwidth=0)
+        self._style.configure(
+            "TNotebook.Tab",
+            padding=(12, 7),
+            background=surface,
+            foreground=text_muted,
+        )
+        self._style.map(
+            "TNotebook.Tab",
+            background=[("selected", panel_soft), ("active", panel)],
+            foreground=[("selected", "#ffffff"), ("active", text)],
+        )
+
+        self._style.configure(
+            "TScrollbar",
+            background=panel_soft,
+            troughcolor=surface,
+            arrowcolor=text,
+            bordercolor=surface,
+        )
 
         self.option_add("*Listbox.font", "TkDefaultFont 10")
+        self.option_add("*Listbox.background", colors["entry_bg"])
+        self.option_add("*Listbox.foreground", colors["entry_fg"])
+        self.option_add("*Listbox.selectBackground", accent)
+        self.option_add("*Listbox.selectForeground", "#ffffff")
+        self.option_add("*Listbox.highlightBackground", panel_soft)
+        self.option_add("*Listbox.highlightColor", accent)
+
+        self.option_add("*Text.background", colors["entry_bg"])
+        self.option_add("*Text.foreground", colors["entry_fg"])
+        self.option_add("*Text.insertBackground", accent)
+        self.option_add("*Text.selectBackground", accent)
+        self.option_add("*Text.selectForeground", "#ffffff")
+        self.option_add("*Text.highlightBackground", panel_soft)
+        self.option_add("*Text.highlightColor", accent)
+
+        self._apply_menu_theme()
+
+    def _apply_menu_theme(self) -> None:
+        """Update menu colors if menus have already been built."""
+        if not hasattr(self, "_menubar"):
+            return
+        menu_bg = self._theme_colors["menu_bg"]
+        text = self._theme_colors["text"]
+        accent = self._theme_colors["accent"]
+        for menu in (
+            self._menubar,
+            getattr(self, "_file_menu", None),
+            getattr(self, "_edit_menu", None),
+            getattr(self, "_settings_menu", None),
+            getattr(self, "_help_menu", None),
+            getattr(self, "_theme_submenu", None),
+        ):
+            if menu is None:
+                continue
+            menu.configure(
+                bg=menu_bg,
+                fg=text,
+                activebackground=accent,
+                activeforeground="#ffffff",
+            )
+
+    def _refresh_theme_dependent_widgets(self) -> None:
+        """Refresh colors for widgets that use explicit foreground/background."""
+        if not self._theme_colors:
+            return
+        guide_text = self._theme_colors["guide_text"]
+        warning_text = self._theme_colors["warning_text"]
+        panel = self._theme_colors["panel"]
+        status_dim = self._theme_colors["status_dim"]
+
+        if hasattr(self, "_rom_label"):
+            self._rom_label.configure(foreground=status_dim)
+        if hasattr(self, "_guide_label"):
+            self._guide_label.configure(foreground=guide_text, background=panel)
+        if hasattr(self, "_validation_hint"):
+            self._validation_hint.configure(foreground=warning_text)
+        self._apply_menu_theme()
+
+    def _on_theme_changed(self) -> None:
+        """Apply and persist theme choice from Settings menu."""
+        mode = self._theme_mode.get()
+        self._settings["theme"] = mode
+        self._save_settings()
+        self._apply_theme(mode)
+        self._refresh_theme_dependent_widgets()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -148,25 +356,25 @@ class ROMEditorApp(tk.Tk):
         return value if isinstance(value, bool) else default
 
     def _build_menu(self) -> None:
-        menubar = tk.Menu(self)
+        self._menubar = tk.Menu(self)
 
         # File menu
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label="Open ROM…", accelerator="Ctrl+O",
-                              command=self._open_rom)
-        file_menu.add_command(label="Save ROM", accelerator="Ctrl+S",
-                              command=self._save_rom)
-        file_menu.add_command(label="Save ROM As…", accelerator="Ctrl+Shift+S",
-                              command=self._save_rom_as)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self._on_exit)
-        menubar.add_cascade(label="File", menu=file_menu)
+        self._file_menu = tk.Menu(self._menubar, tearoff=False)
+        self._file_menu.add_command(label="Open ROM…", accelerator="Ctrl+O",
+                                    command=self._open_rom)
+        self._file_menu.add_command(label="Save ROM", accelerator="Ctrl+S",
+                                    command=self._save_rom)
+        self._file_menu.add_command(label="Save ROM As…", accelerator="Ctrl+Shift+S",
+                                    command=self._save_rom_as)
+        self._file_menu.add_separator()
+        self._file_menu.add_command(label="Exit", command=self._on_exit)
+        self._menubar.add_cascade(label="File", menu=self._file_menu)
         self.bind("<Control-o>", lambda _e: self._open_rom())
         self.bind("<Control-s>", lambda _e: self._save_rom())
         self.bind("<Control-S>", lambda _e: self._save_rom_as())
 
         # Edit menu
-        self._edit_menu = tk.Menu(menubar, tearoff=False)
+        self._edit_menu = tk.Menu(self._menubar, tearoff=False)
         self._edit_menu.add_command(
             label="Undo", accelerator="Ctrl+Z",
             command=self._undo, state="disabled")
@@ -176,18 +384,37 @@ class ROMEditorApp(tk.Tk):
         self._edit_menu.add_separator()
         self._edit_menu.add_command(label="Reload from ROM",
                                     command=self._reload_from_rom)
-        menubar.add_cascade(label="Edit", menu=self._edit_menu)
+        self._menubar.add_cascade(label="Edit", menu=self._edit_menu)
         self.bind("<Control-z>", lambda _e: self._undo())
         self.bind("<Control-y>", lambda _e: self._redo())
 
-        # Help menu
-        help_menu = tk.Menu(menubar, tearoff=False)
-        help_menu.add_command(label="About", command=self._show_about)
-        help_menu.add_command(label="Configure OpenAI API Key…",
-                              command=self._configure_api_key)
-        menubar.add_cascade(label="Help", menu=help_menu)
+        # Settings menu
+        self._settings_menu = tk.Menu(self._menubar, tearoff=False)
+        self._theme_submenu = tk.Menu(self._settings_menu, tearoff=False)
+        self._theme_submenu.add_radiobutton(
+            label="Dark",
+            variable=self._theme_mode,
+            value="dark",
+            command=self._on_theme_changed,
+        )
+        self._theme_submenu.add_radiobutton(
+            label="Light",
+            variable=self._theme_mode,
+            value="light",
+            command=self._on_theme_changed,
+        )
+        self._settings_menu.add_cascade(label="Theme", menu=self._theme_submenu)
+        self._menubar.add_cascade(label="Settings", menu=self._settings_menu)
 
-        self.config(menu=menubar)
+        # Help menu
+        self._help_menu = tk.Menu(self._menubar, tearoff=False)
+        self._help_menu.add_command(label="About", command=self._show_about)
+        self._help_menu.add_command(label="Configure OpenAI API Key…",
+                                    command=self._configure_api_key)
+        self._menubar.add_cascade(label="Help", menu=self._help_menu)
+
+        self.config(menu=self._menubar)
+        self._apply_menu_theme()
 
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self, relief="groove", style="Toolbar.TFrame")
@@ -218,12 +445,12 @@ class ROMEditorApp(tk.Tk):
         bar = ttk.Frame(self, relief="ridge", style="Guide.TFrame")
         bar.pack(side="top", fill="x")
         self._guide_var = tk.StringVar()
-        ttk.Label(
+        self._guide_label = ttk.Label(
             bar,
             textvariable=self._guide_var,
             anchor="w",
-            foreground="#1f4f7a",
-        ).pack(side="left", padx=8, pady=3)
+        )
+        self._guide_label.pack(side="left", padx=8, pady=3)
         self._update_guidance()
 
     def _build_notebook(self) -> None:
@@ -289,7 +516,7 @@ class ROMEditorApp(tk.Tk):
             self._notebook,
             on_modified=self._on_data_modified,
         )
-        self._notebook.add(self._learnset_editor, text="Learnsets (Exp)")
+        self._notebook.add(self._learnset_editor, text="Movepools (Learnsets)")
 
         # Dungeon tab
         self._dungeon_outer = ttk.Frame(self._notebook)
@@ -335,11 +562,11 @@ class ROMEditorApp(tk.Tk):
         self._validation_tab.rowconfigure(1, weight=1)
         top = ttk.Frame(self._validation_tab)
         top.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 2))
-        ttk.Label(
+        self._validation_hint = ttk.Label(
             top,
             text="Warnings help catch risky values before saving.",
-            foreground="#7a4f1f",
-        ).pack(side="left")
+        )
+        self._validation_hint.pack(side="left")
         ttk.Button(
             top,
             text="Refresh Warnings",
@@ -436,7 +663,7 @@ class ROMEditorApp(tk.Tk):
             self._modified = False
             self._rom_label.configure(
                 text=f"{Path(path).name}  [{rom.header.game_code}]",
-                foreground="black",
+                foreground=self._theme_colors.get("text", "black"),
             )
             self._status(f"Loaded: {path}")
             self._schedule_autosave()

@@ -38,6 +38,7 @@ from rom_editor.nds.narc import NARC
 from rom_editor.games.explorers_sky.constants import (
     POKEMON_NAMES, TYPE_NAMES, ABILITY_NAMES,
     IQ_GROUP_NAMES, EXP_GROUP_NAMES,
+    EVOLUTION_METHOD_NAMES, EVOLUTION_REQUIREMENT_NAMES,
 )
 
 _ENTRY_SIZE = 0x1C  # 28 bytes per Pokémon
@@ -74,6 +75,12 @@ class PokemonEntry:
     size: int           # body size (1=Tiny … 4=Huge)
     recruit_rate2: int  # secondary recruit flag
 
+    # Evolution fields (from monster.md, defaults for non-MD sources)
+    pre_evo_index: int = 0
+    evo_method: int = 0
+    evo_param1: int = 0
+    evo_param2: int = 0
+
     @property
     def name(self) -> str:
         if 0 <= self.index < len(POKEMON_NAMES):
@@ -107,6 +114,20 @@ class PokemonEntry:
         return (
             EXP_GROUP_NAMES[self.exp_group]
             if 0 <= self.exp_group < len(EXP_GROUP_NAMES) else "???"
+        )
+
+    @property
+    def evo_method_name(self) -> str:
+        return (
+            EVOLUTION_METHOD_NAMES[self.evo_method]
+            if 0 <= self.evo_method < len(EVOLUTION_METHOD_NAMES) else "Unknown"
+        )
+
+    @property
+    def evo_requirement_name(self) -> str:
+        return (
+            EVOLUTION_REQUIREMENT_NAMES[self.evo_param2]
+            if 0 <= self.evo_param2 < len(EVOLUTION_REQUIREMENT_NAMES) else "Unknown"
         )
 
     @property
@@ -225,6 +246,10 @@ class PokemonTable:
             chunk = data[off: off + _MD_ENTRY_SIZE]
 
             # Layout follows ppmd's PokeMonsterData (EoS, 68 bytes).
+            pre_evo_index = struct.unpack_from("<H", chunk, 8)[0]
+            evo_method = struct.unpack_from("<H", chunk, 10)[0]
+            evo_param1 = struct.unpack_from("<H", chunk, 12)[0]
+            evo_param2 = struct.unpack_from("<H", chunk, 14)[0]
             type1 = chunk[20]
             type2 = chunk[21]
             iq_group = chunk[23]
@@ -260,6 +285,10 @@ class PokemonTable:
                 recruit_rate1=recruit_rate1,
                 size=max(1, min(4, size)),
                 recruit_rate2=recruit_rate2,
+                pre_evo_index=pre_evo_index,
+                evo_method=evo_method,
+                evo_param1=evo_param1,
+                evo_param2=evo_param2,
             ))
 
         table = cls(entries, source_format="md")
@@ -321,6 +350,10 @@ class PokemonTable:
                 continue
             off = _MD_HEADER.size + entry.index * _MD_ENTRY_SIZE
 
+            struct.pack_into("<H", blob, off + 8, max(0, min(0xFFFF, entry.pre_evo_index)))
+            struct.pack_into("<H", blob, off + 10, max(0, min(0xFFFF, entry.evo_method)))
+            struct.pack_into("<H", blob, off + 12, max(0, min(0xFFFF, entry.evo_param1)))
+            struct.pack_into("<H", blob, off + 14, max(0, min(0xFFFF, entry.evo_param2)))
             blob[off + 20] = max(0, min(255, entry.type1))
             blob[off + 21] = max(0, min(255, entry.type2))
             blob[off + 23] = max(0, min(255, entry.iq_group))

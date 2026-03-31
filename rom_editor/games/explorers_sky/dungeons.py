@@ -81,11 +81,14 @@ class DungeonEntry:
     kecleon_shop_chance: int
     music_id: int                # BGM track
     fixed_floor_id: int          # 0 = no fixed floor
+    custom_name: Optional[str] = None
 
     _raw_header: bytes = field(default=b"\x00" * _HEADER_SIZE, repr=False)
 
     @property
     def name(self) -> str:
+        if self.custom_name:
+            return self.custom_name
         if 0 <= self.index < len(DUNGEON_NAMES):
             return DUNGEON_NAMES[self.index]
         return f"Dungeon#{self.index}"
@@ -295,9 +298,12 @@ class DungeonTable:
 
     def write_to_narc(self, narc: NARC) -> None:
         for entry in self._entries:
+            full_raw = self._raw_files[entry.index]
+            payload = bytearray(entry.to_bytes(full_raw))
             if entry.index < narc.num_files:
-                full_raw = self._raw_files[entry.index]
-                narc[entry.index].data = bytearray(entry.to_bytes(full_raw))
+                narc[entry.index].data = payload
+            else:
+                narc.append_file(payload)
 
     def to_flat_bytes(self) -> bytes:
         """Serialize back to fixed-size flat record format."""
@@ -307,3 +313,42 @@ class DungeonTable:
                 full_raw = self._raw_files[entry.index]
                 out.extend(entry.to_bytes(full_raw))
         return bytes(out)
+
+    def create_custom_dungeon(
+        self,
+        source_index: int,
+        custom_name: Optional[str] = None,
+    ) -> DungeonEntry:
+        """Create a new dungeon by cloning an existing source entry."""
+        if not (0 <= source_index < len(self._entries)):
+            raise IndexError(f"Invalid source dungeon index: {source_index}")
+
+        source = self._entries[source_index]
+        if source.index >= len(self._raw_files):
+            raise ValueError("Source dungeon has no backing raw file")
+
+        new_index = len(self._entries)
+        new_entry = DungeonEntry(
+            index=new_index,
+            num_floors=source.num_floors,
+            darkness=source.darkness,
+            weather=source.weather,
+            monster_house_chance=source.monster_house_chance,
+            buried_item_chance=source.buried_item_chance,
+            empty_mh_chance=source.empty_mh_chance,
+            random_start_floor=source.random_start_floor,
+            map_gen_flags=source.map_gen_flags,
+            item_density=source.item_density,
+            trap_density=source.trap_density,
+            floor_connectivity=source.floor_connectivity,
+            water_chance=source.water_chance,
+            kecleon_shop_chance=source.kecleon_shop_chance,
+            music_id=source.music_id,
+            fixed_floor_id=source.fixed_floor_id,
+            custom_name=custom_name or f"Custom Dungeon {new_index:03d}",
+            _raw_header=bytes(source._raw_header),
+        )
+
+        self._entries.append(new_entry)
+        self._raw_files.append(bytes(self._raw_files[source.index]))
+        return new_entry

@@ -57,12 +57,7 @@ class DungeonEditorTab(ttk.Frame):
         self._listbox.delete(0, tk.END)
         self._picker_options = []
         self._picker_lookup = {}
-        for entry in table:
-            label = f"#{entry.index:03d} {entry.name}"
-            self._listbox.insert(tk.END, label)
-            self._picker_options.append(label)
-            self._picker_lookup[label] = entry.index
-        self._picker_cb.configure(values=self._picker_options)
+        self._refresh_picker_and_list()
         if self._picker_options:
             self._picker_var.set(self._picker_options[0])
 
@@ -124,6 +119,12 @@ class DungeonEditorTab(ttk.Frame):
         self._listbox.pack(side="left", fill="both", expand=True)
         self._listbox.bind("<<ListboxSelect>>", self._on_select)
 
+        ttk.Button(
+            left,
+            text="Create Custom from Selected",
+            command=self._create_custom_from_selected,
+        ).pack(fill="x", pady=(4, 0))
+
         # Right: editor
         right = ttk.Frame(self)
         right.grid(row=0, column=1, sticky="nsew", padx=4, pady=4)
@@ -182,6 +183,40 @@ class DungeonEditorTab(ttk.Frame):
             label = f"#{e.index:03d} {e.name}"
             if q in label.lower():
                 self._listbox.insert(tk.END, label)
+
+    def _refresh_picker_and_list(self) -> None:
+        self._listbox.delete(0, tk.END)
+        self._picker_options = []
+        self._picker_lookup = {}
+        if self._table is None:
+            self._picker_cb.configure(values=[])
+            return
+        for entry in self._table:
+            label = f"#{entry.index:03d} {entry.name}"
+            self._listbox.insert(tk.END, label)
+            self._picker_options.append(label)
+            self._picker_lookup[label] = entry.index
+        self._picker_cb.configure(values=self._picker_options)
+
+    def _create_custom_from_selected(self) -> None:
+        if self._table is None or self._current_entry is None:
+            return
+        source = self._current_entry
+        custom = self._table.create_custom_dungeon(source.index)
+        self._refresh_picker_and_list()
+
+        label = f"#{custom.index:03d} {custom.name}"
+        self._picker_var.set(label)
+        self._current_entry = custom
+        self._populate(custom)
+        for i in range(self._listbox.size()):
+            if self._listbox.get(i).startswith(f"#{custom.index:03d} "):
+                self._listbox.selection_clear(0, tk.END)
+                self._listbox.selection_set(i)
+                self._listbox.see(i)
+                break
+        if self._on_modified:
+            self._on_modified()
 
     def _on_select(self, _event=None) -> None:
         sel = self._listbox.curselection()

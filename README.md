@@ -12,10 +12,10 @@ A cross-platform (Windows & Linux) ROM editing tool for **Pokémon Mystery Dunge
 | Feature | Description |
 |---------|-------------|
 | 🎮 **ROM loading** | Open and save NDS ROM files (US `YOTE`, EU `YOTJ`, JP `YOTK`) |
-| 🐾 **Pokémon Stats Editor** | Edit base HP, Attack, Sp. Atk, Defense, Sp. Def, Speed, types, abilities, EXP group |
+| 🐾 **Pokémon Data Editor** | Edit base stats, types, abilities, EXP group, recruit rates, and evolution fields |
 | ⚔️ **Move Editor** | Edit move type, category, base power, accuracy, PP, target, range |
-| 🏰 **Dungeon Editor** | Edit floor count, weather, darkness, item density, trap density, Kecleon shop chance, and more |
-| 📘 **Learnset Editor (Experimental)** | Edit WAZA pointer-table level-up learnsets with size-safe writing |
+| 🏰 **Dungeon Editor** | Edit dungeon parameters and create custom dungeons by cloning existing entries |
+| 📘 **Movepool Editor (Experimental)** | Edit WAZA pointer-table level-up movepools/learnsets with size-safe writing |
 | 📝 **Text (Raw) Editor** | Edit text-like ROM files (e.g. `/MESSAGE/*`) in size-preserving safe mode |
 | ✅ **Validation Warnings** | Detect suspicious values (very high BST/power, invalid ranges, extreme floor counts) before saving |
 | 🤖 **AI Suggestions** | Get balance recommendations powered by OpenAI (requires API key) or a built-in rule-based engine |
@@ -28,6 +28,15 @@ A cross-platform (Windows & Linux) ROM editing tool for **Pokémon Mystery Dunge
 - Python 3.9 or newer
 - tkinter (bundled with most Python distributions)
 - Optional: `openai` Python package for AI suggestions via OpenAI
+
+### Linux note
+
+Some Linux Python installs do not ship `tkinter` by default. If launching the app fails with
+`ModuleNotFoundError: No module named 'tkinter'`, install your distro package first:
+
+- Debian/Ubuntu: `sudo apt update && sudo apt install -y python3-tk`
+- Fedora: `sudo dnf install -y python3-tkinter`
+- Arch: `sudo pacman -S tk`
 
 ```
 pip install -r requirements.txt
@@ -62,7 +71,7 @@ python main.py
 ### Editing Pokémon Stats
 
 - Select a Pokémon from the left list (use the search box to filter)
-- Edit types, abilities, and base stats using the spinboxes and dropdowns
+- Edit types, abilities, base stats, recruit rates, and evolution fields using the spinboxes and dropdowns
 - The **BST** (Base Stat Total) updates live
 - Click **Apply Changes** to confirm your edits
 
@@ -78,9 +87,9 @@ python main.py
 - Edit floor count, weather, darkness, and spawn/item parameters
 - Click **Apply Changes**
 
-### Editing Learnsets (Experimental)
+### Editing Movepools / Learnsets (Experimental)
 
-- Open the **Learnsets (Exp)** tab
+- Open the **Movepools (Learnsets)** tab
 - Select a Pokémon and edit lines as `move_id,level`
 - Click **Apply Learnset**
 - Optional: enable **Auto-fit repack on save** to allow encoded list sizes to change

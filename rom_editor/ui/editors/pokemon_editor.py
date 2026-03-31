@@ -9,7 +9,12 @@ from typing import Optional, Callable
 
 from rom_editor.games.explorers_sky.pokemon import PokemonEntry, PokemonTable
 from rom_editor.games.explorers_sky.constants import (
-    POKEMON_NAMES, TYPE_NAMES, ABILITY_NAMES, EXP_GROUP_NAMES,
+    POKEMON_NAMES,
+    TYPE_NAMES,
+    ABILITY_NAMES,
+    EXP_GROUP_NAMES,
+    EVOLUTION_METHOD_NAMES,
+    EVOLUTION_REQUIREMENT_NAMES,
 )
 from rom_editor.ui.editors.sprite_viewer import SpriteViewer
 
@@ -34,6 +39,16 @@ TYPE_COLORS: dict[str, str] = {
     "Steel":    "#B8B8D0",
     "???":      "#888888",
 }
+
+_EVO_METHOD_OPTIONS = [
+    f"{i:02d} - {name}" for i, name in enumerate(EVOLUTION_METHOD_NAMES)
+]
+_EVO_REQUIREMENT_OPTIONS = [
+    f"{i:02d} - {name}" for i, name in enumerate(EVOLUTION_REQUIREMENT_NAMES)
+]
+_PRE_EVO_OPTIONS = [
+    f"#{i:04d} {name}" for i, name in enumerate(POKEMON_NAMES)
+]
 
 
 class PokemonEditorTab(ttk.Frame):
@@ -70,7 +85,12 @@ class PokemonEditorTab(ttk.Frame):
         self._ability1_var = tk.StringVar()
         self._ability2_var = tk.StringVar()
         self._exp_group_var = tk.StringVar()
+        self._pre_evo_var = tk.StringVar()
+        self._evo_method_var = tk.StringVar()
+        self._evo_param1_var = tk.IntVar()
+        self._evo_req_var = tk.StringVar()
         self._recruit_var = tk.IntVar()
+        self._recruit2_var = tk.IntVar()
         self._size_var = tk.IntVar()
         self._bst_var = tk.StringVar(value="BST: —")
         self._build_ui()
@@ -120,6 +140,22 @@ class PokemonEditorTab(ttk.Frame):
         )
         color = TYPE_COLORS.get(type_name, "#000000")
         self._listbox.itemconfigure(pos, foreground=color)
+
+    @staticmethod
+    def _format_id_option(value: int, options: list[str]) -> str:
+        if 0 <= value < len(options):
+            return options[value]
+        width = 4 if options and options[0].startswith("#") else 2
+        return f"{value:0{width}d} - Unknown"
+
+    @staticmethod
+    def _parse_id_option(value: str) -> int:
+        token = value.strip().split(" ", 1)[0]
+        token = token.split("-", 1)[0].strip().lstrip("#")
+        try:
+            return int(token)
+        except Exception:
+            return 0
 
     # ------------------------------------------------------------------
     # UI construction
@@ -231,6 +267,62 @@ class PokemonEditorTab(ttk.Frame):
         self._advanced_widgets.extend([lbl_exp, cb_exp])
         row += 1
 
+        # Evolution fields (advanced only)
+        lbl_pre = ttk.Label(right, text="Pre-Evolution:")
+        lbl_pre.grid(row=row, column=0, sticky="e", padx=4)
+        cb_pre = ttk.Combobox(
+            right,
+            textvariable=self._pre_evo_var,
+            values=_PRE_EVO_OPTIONS,
+            state="readonly",
+            width=22,
+        )
+        cb_pre.grid(row=row, column=1, sticky="w")
+        cb_pre.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_pre, cb_pre])
+        row += 1
+
+        lbl_evo_method = ttk.Label(right, text="Evo Method:")
+        lbl_evo_method.grid(row=row, column=0, sticky="e", padx=4)
+        cb_evo_method = ttk.Combobox(
+            right,
+            textvariable=self._evo_method_var,
+            values=_EVO_METHOD_OPTIONS,
+            state="readonly",
+            width=20,
+        )
+        cb_evo_method.grid(row=row, column=1, sticky="w")
+        cb_evo_method.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_evo_method, cb_evo_method])
+        row += 1
+
+        lbl_evo_param = ttk.Label(right, text="Evo Param 1:")
+        lbl_evo_param.grid(row=row, column=0, sticky="e", padx=4)
+        sb_evo_param = ttk.Spinbox(
+            right,
+            from_=0,
+            to=65535,
+            textvariable=self._evo_param1_var,
+            width=8,
+        )
+        sb_evo_param.grid(row=row, column=1, sticky="w")
+        self._advanced_widgets.extend([lbl_evo_param, sb_evo_param])
+        row += 1
+
+        lbl_evo_req = ttk.Label(right, text="Evo Requirement:")
+        lbl_evo_req.grid(row=row, column=0, sticky="e", padx=4)
+        cb_evo_req = ttk.Combobox(
+            right,
+            textvariable=self._evo_req_var,
+            values=_EVO_REQUIREMENT_OPTIONS,
+            state="readonly",
+            width=20,
+        )
+        cb_evo_req.grid(row=row, column=1, sticky="w")
+        cb_evo_req.bind("<<ComboboxSelected>>", self._on_field_changed)
+        self._advanced_widgets.extend([lbl_evo_req, cb_evo_req])
+        row += 1
+
         # Stat spinboxes
         ttk.Separator(right, orient="horizontal").grid(
             row=row, column=0, columnspan=2, sticky="ew", pady=6)
@@ -256,6 +348,15 @@ class PokemonEditorTab(ttk.Frame):
                              textvariable=self._recruit_var, width=6)
         sb_rec.grid(row=row, column=1, sticky="w")
         self._advanced_widgets.extend([lbl_rec, sb_rec])
+        row += 1
+
+        # Recruit Rate 2 (advanced only)
+        lbl_rec2 = ttk.Label(right, text="Recruit Rate 2:")
+        lbl_rec2.grid(row=row, column=0, sticky="e", padx=4)
+        sb_rec2 = ttk.Spinbox(right, from_=-100, to=100,
+                      textvariable=self._recruit2_var, width=6)
+        sb_rec2.grid(row=row, column=1, sticky="w")
+        self._advanced_widgets.extend([lbl_rec2, sb_rec2])
         row += 1
 
         # Size (advanced only)
@@ -366,9 +467,14 @@ class PokemonEditorTab(ttk.Frame):
             entry.exp_group = EXP_GROUP_NAMES.index(self._exp_group_var.get())
         except ValueError:
             pass
+        entry.pre_evo_index = max(0, self._parse_id_option(self._pre_evo_var.get()))
+        entry.evo_method = max(0, self._parse_id_option(self._evo_method_var.get()))
+        entry.evo_param1 = max(0, min(65535, self._evo_param1_var.get()))
+        entry.evo_param2 = max(0, self._parse_id_option(self._evo_req_var.get()))
         for field, _ in self._STAT_FIELDS:
             setattr(entry, field, max(1, min(255, self._stat_vars[field].get())))
         entry.recruit_rate1 = max(-128, min(127, self._recruit_var.get()))
+        entry.recruit_rate2 = max(-32768, min(32767, self._recruit2_var.get()))
         entry.size = max(1, min(4, self._size_var.get()))
         self._update_bst()
         if notify:
@@ -426,7 +532,12 @@ class PokemonEditorTab(ttk.Frame):
             EXP_GROUP_NAMES[entry.exp_group]
             if 0 <= entry.exp_group < len(EXP_GROUP_NAMES) else ""
         )
+        self._pre_evo_var.set(self._format_id_option(entry.pre_evo_index, _PRE_EVO_OPTIONS))
+        self._evo_method_var.set(self._format_id_option(entry.evo_method, _EVO_METHOD_OPTIONS))
+        self._evo_param1_var.set(entry.evo_param1)
+        self._evo_req_var.set(self._format_id_option(entry.evo_param2, _EVO_REQUIREMENT_OPTIONS))
         self._recruit_var.set(entry.recruit_rate1)
+        self._recruit2_var.set(entry.recruit_rate2)
         self._size_var.set(entry.size)
         for field, _ in self._STAT_FIELDS:
             self._stat_vars[field].set(getattr(entry, field, 0))

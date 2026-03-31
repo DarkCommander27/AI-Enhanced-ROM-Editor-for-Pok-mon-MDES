@@ -570,3 +570,33 @@ IQ_GROUP_NAMES: list[str] = [
 EXP_GROUP_NAMES: list[str] = [
     "Slow", "Medium Slow", "Medium Fast", "Fast",
 ]
+
+# Evolution method IDs used in monster.md.
+EVOLUTION_METHOD_NAMES: list[str] = [
+    "None",        # 0
+    "Level",       # 1
+    "IQ",          # 2
+    "Item",        # 3
+    "Recruited",   # 4
+    "No Requirement",  # 5
+]
+
+# Additional evolution requirement IDs used in monster.md.
+EVOLUTION_REQUIREMENT_NAMES: list[str] = [
+    "None",              # 0
+    "Link Cable",        # 1
+    "Atk > Def",         # 2
+    "Atk < Def",         # 3
+    "Atk = Def",         # 4
+    "Sun Ribbon",        # 5
+    "Lunar Ribbon",      # 6
+    "Beauty Scarf",      # 7
+    "Int Value 1",       # 8
+    "Int Value 0",       # 9
+    "Male",              # 10
+    "Female",            # 11
+    "Ancient Power",     # 12
+    "Rollout",           # 13
+    "Double Hit",        # 14
+    "Mimic",             # 15
+]

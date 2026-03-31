@@ -116,3 +116,52 @@ class TestPokemonTable:
         data = self._make_table_bytes(count)
         table = PokemonTable.from_bytes(data)
         assert len(table.to_bytes()) == count * _ENTRY_SIZE
+
+
+class TestPokemonTableMdEvolution:
+    def _make_md_blob(self) -> bytes:
+        entry = bytearray(0x44)
+        # Evolution fields
+        struct.pack_into("<H", entry, 0x08, 133)   # pre evo
+        struct.pack_into("<H", entry, 0x0A, 1)     # LEVEL
+        struct.pack_into("<H", entry, 0x0C, 36)    # level param
+        struct.pack_into("<H", entry, 0x0E, 0)     # no extra requirement
+        # Basic stats fields used by parser
+        entry[0x14] = 12   # type1
+        entry[0x15] = 17   # type2
+        entry[0x17] = 3    # iq group
+        entry[0x18] = 34   # ability1
+        entry[0x19] = 0    # ability2
+        struct.pack_into("<h", entry, 0x1E, 10)    # recruit_rate1
+        struct.pack_into("<H", entry, 0x20, 80)    # hp
+        struct.pack_into("<h", entry, 0x22, 2)     # recruit_rate2
+        entry[0x24] = 82   # atk
+        entry[0x25] = 100  # spatk
+        entry[0x26] = 83   # def
+        entry[0x27] = 100  # spdef
+        struct.pack_into("<h", entry, 0x2A, 2)     # size
+
+        return b"MD\x00\x00" + struct.pack("<I", 1) + bytes(entry)
+
+    def test_from_md_parses_evolution_fields(self):
+        table = PokemonTable.from_md_bytes(self._make_md_blob())
+        e = table[0]
+        assert e.pre_evo_index == 133
+        assert e.evo_method == 1
+        assert e.evo_param1 == 36
+        assert e.evo_param2 == 0
+
+    def test_to_md_writes_evolution_fields(self):
+        table = PokemonTable.from_md_bytes(self._make_md_blob())
+        e = table[0]
+        e.pre_evo_index = 2
+        e.evo_method = 3
+        e.evo_param1 = 77
+        e.evo_param2 = 5
+
+        out = table.to_md_bytes()
+        base = 8
+        assert struct.unpack_from("<H", out, base + 0x08)[0] == 2
+        assert struct.unpack_from("<H", out, base + 0x0A)[0] == 3
+        assert struct.unpack_from("<H", out, base + 0x0C)[0] == 77
+        assert struct.unpack_from("<H", out, base + 0x0E)[0] == 5

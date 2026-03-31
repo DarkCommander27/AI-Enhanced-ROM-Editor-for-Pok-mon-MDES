@@ -124,6 +124,13 @@ class NARC:
                 return f
         return None
 
+    def append_file(self, data: bytes | bytearray, name: Optional[str] = None) -> NARCFile:
+        """Append a new file to the archive and return the created entry."""
+        new_index = len(self._files)
+        entry = NARCFile(index=new_index, name=name, data=bytearray(data))
+        self._files.append(entry)
+        return entry
+
     def to_bytes(self) -> bytes:
         """Repack the NARC archive to bytes."""
         # Build GMIF (file image) and FAT entries

@@ -32,6 +32,12 @@ try:
 except ImportError:  # pragma: no cover
     _HAS_PIL = False
 
+try:
+    from skytemple_files.graphics.kao.handler import KaoHandler
+    _HAS_SKYTEMPLE_KAO = True
+except Exception:  # pragma: no cover
+    _HAS_SKYTEMPLE_KAO = False
+
 # ---------------------------------------------------------------------------
 # kaomado.bin constants
 # ---------------------------------------------------------------------------
@@ -39,30 +45,17 @@ _DEFAULT_NUM_POKEMON = 600
 _NUM_EMOTIONS = 40
 
 _PORTRAIT_BYTES = 800   # expected decompressed tiled 4bpp image size
+_PALETTE_BRG555_BYTES = 32
+_PALETTE_RGB24_BYTES = 48
 
 # ---------------------------------------------------------------------------
 # AT4PX decompressor
 # ---------------------------------------------------------------------------
 _AT4PX_MAGIC = b"AT4PX"
-_HDR_SIZE = 18   # 5 + 2 + 9 + 2 (AT4PX)
 
 
-def _decompress_at4px(data: bytes, offset: int) -> bytes:
-    """Decompress one AT4PX block at *offset* inside *data*.
-
-    Raises ``ValueError`` if the magic is missing.
-    """
-    if data[offset: offset + 5] != _AT4PX_MAGIC:
-        raise ValueError(
-            f"Expected AT4PX at {offset:#x}, "
-            f"got {data[offset: offset + 5]!r}"
-        )
-
-    comp_size   = struct.unpack_from("<H", data, offset + 5)[0]
-    spec        = data[offset + 7: offset + 16]   # 9 look-back distances
-    decomp_size = struct.unpack_from("<H", data, offset + 16)[0]
-    comp        = data[offset + _HDR_SIZE: offset + _HDR_SIZE + comp_size]
-
+def _decompress_at4px_stream(comp: bytes, spec: bytes, decomp_size: int) -> bytes:
+    """Decompress one AT4PX compressed payload stream."""
     output: bytearray = bytearray()
     i = 0
     while len(output) < decomp_size and i < len(comp):
@@ -77,33 +70,101 @@ def _decompress_at4px(data: bytes, offset: int) -> bytes:
                 i += 1
             else:
                 # Back-reference: (key:3 | length-3:5)
-                ref      = comp[i]
-                i       += 1
-                key      = (ref >> 5) & 0x7   # 3-bit index into spec[]
-                length   = (ref & 0x1F) + 3   # copy this many bytes
-                lookback = spec[key]           # distance back in output
-                src      = len(output) - lookback
+                ref = comp[i]
+                i += 1
+                key = (ref >> 5) & 0x7      # 3-bit index into spec[]
+                length = (ref & 0x1F) + 3   # copy this many bytes
+                lookback = spec[key]         # distance back in output
+                src = len(output) - lookback
                 for _ in range(length):
+                    if len(output) >= decomp_size:
+                        break
                     output.append(output[src] if 0 <= src < len(output) else 0)
                     src += 1
 
     return bytes(output)
 
 
+def _decompress_at4px(data: bytes, offset: int) -> bytes:
+    """Decompress one AT4PX block at *offset* inside *data*.
+
+    Raises ``ValueError`` if the magic is missing.
+    """
+    if data[offset: offset + 5] != _AT4PX_MAGIC:
+        raise ValueError(
+            f"Expected AT4PX at {offset:#x}, "
+            f"got {data[offset: offset + 5]!r}"
+        )
+
+    # Different dumps/tools expose slightly different AT4PX header layouts.
+    # Try known variants and accept the first one that decodes cleanly.
+    layouts = [
+        # [magic][comp:2][spec:9][decomp:2]
+        (18, 5, 7, 16),
+        # [magic][reserved:1][comp:2][spec:9][decomp:2]
+        (19, 6, 8, 17),
+        # [magic][reserved:1][comp:2][decomp:2][spec:9]
+        (19, 6, 10, 8),
+    ]
+
+    for hdr_size, comp_off, spec_off, decomp_off in layouts:
+        try:
+            comp_size = struct.unpack_from("<H", data, offset + comp_off)[0]
+            decomp_size = struct.unpack_from("<H", data, offset + decomp_off)[0]
+            spec = data[offset + spec_off: offset + spec_off + 9]
+            if len(spec) != 9 or comp_size <= 0 or decomp_size <= 0:
+                continue
+            comp_start = offset + hdr_size
+            comp_end = comp_start + comp_size
+            if comp_end > len(data):
+                continue
+            out = _decompress_at4px_stream(data[comp_start:comp_end], spec, decomp_size)
+            if len(out) >= decomp_size:
+                return out[:decomp_size]
+        except Exception:
+            continue
+
+    raise ValueError(f"Unsupported or corrupted AT4PX block at {offset:#x}")
+
+
 # ---------------------------------------------------------------------------
 # Portrait image builder
 # ---------------------------------------------------------------------------
 
-def _raw_to_image(raw: bytes, palette_bytes: bytes) -> "Image.Image":
-    """Convert decompressed 4bpp tile data + RGB24 palette into a 40×40 image."""
-    # Decode 16-color RGB24 palette (48 bytes)
+def _palette_from_rgb24(palette_bytes: bytes) -> list[tuple[int, int, int]]:
+    """Decode 16-color RGB24 palette (48 bytes)."""
+    if len(palette_bytes) < _PALETTE_RGB24_BYTES:
+        raise ValueError("RGB24 palette too short")
     palette: list[tuple[int, int, int]] = []
     for ci in range(16):
         base = ci * 3
-        r = palette_bytes[base]
-        g = palette_bytes[base + 1]
-        b = palette_bytes[base + 2]
-        palette.append((r, g, b))
+        palette.append(
+            (
+                palette_bytes[base],
+                palette_bytes[base + 1],
+                palette_bytes[base + 2],
+            )
+        )
+    return palette
+
+
+def _palette_from_bgr555(palette_bytes: bytes) -> list[tuple[int, int, int]]:
+    """Decode 16-color Nintendo DS BGR555 palette (32 bytes)."""
+    if len(palette_bytes) < _PALETTE_BRG555_BYTES:
+        raise ValueError("BGR555 palette too short")
+    palette: list[tuple[int, int, int]] = []
+    for ci in range(16):
+        value = struct.unpack_from("<H", palette_bytes, ci * 2)[0]
+        b = (value >> 10) & 0x1F
+        g = (value >> 5) & 0x1F
+        r = value & 0x1F
+        # Expand 5-bit channels to 8-bit.
+        palette.append(((r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2)))
+    return palette
+
+
+def _raw_to_image(raw: bytes, palette: list[tuple[int, int, int]]) -> "Image.Image":
+    """Convert decompressed 4bpp tiles + palette into a 40×40 image."""
 
     # Assemble 5×5 tile grid → 40×40 image
     img = Image.new("RGB", (40, 40))
@@ -117,9 +178,9 @@ def _raw_to_image(raw: bytes, palette_bytes: bytes) -> "Image.Image":
         for row in range(8):
             for col4 in range(4):
                 byte = tile[row * 4 + col4]
-                # KAO raw portraits use reversed nibble order for left/right pixels.
-                px[tx + col4 * 2,     ty + row] = palette[(byte >> 4) & 0xF]
-                px[tx + col4 * 2 + 1, ty + row] = palette[byte & 0xF]
+                # NDS 4bpp stores left pixel in low nibble and right pixel in high nibble.
+                px[tx + col4 * 2, ty + row] = palette[byte & 0xF]
+                px[tx + col4 * 2 + 1, ty + row] = palette[(byte >> 4) & 0xF]
 
     return img
 
@@ -143,6 +204,7 @@ class PortraitContainer:
 
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._kao = None
         self._num_emotions = _NUM_EMOTIONS
         self._num_pokemon = self._infer_num_pokemon()
         self._table_entries = self._num_pokemon * self._num_emotions
@@ -151,6 +213,16 @@ class PortraitContainer:
             raise ValueError(
                 f"kaomado too short: {len(data)} < {self._table_bytes}"
             )
+
+        if _HAS_SKYTEMPLE_KAO:
+            try:
+                self._kao = KaoHandler.deserialize(data)
+                # Prefer SkyTemple model metadata when available.
+                self._num_pokemon = int(self._kao.n_entries())
+                self._table_entries = self._num_pokemon * self._num_emotions
+                self._table_bytes = self._table_entries * 4
+            except Exception:
+                self._kao = None
 
     def _infer_num_pokemon(self) -> int:
         """Infer ToC size from first positive signed offset in kaomado.kao."""
@@ -189,6 +261,22 @@ class PortraitContainer:
         """Return a 40×40 PIL Image for *poke_idx* / *emotion*, or ``None``."""
         if not _HAS_PIL:
             return None
+
+        # Primary path: use the SkyTemple KAO implementation (accurate format handling).
+        if self._kao is not None:
+            if not (0 <= poke_idx < self._num_pokemon):
+                return None
+            if not (0 <= emotion < self._num_emotions):
+                return None
+            try:
+                kao_img = self._kao.get(poke_idx, emotion)
+                if kao_img is None:
+                    return None
+                return kao_img.get().convert("RGBA")
+            except Exception:
+                # Fall back to legacy decoder below.
+                pass
+
         if not (0 <= poke_idx < self._num_pokemon):
             return None
         if not (0 <= emotion < self._num_emotions):
@@ -197,13 +285,33 @@ class PortraitContainer:
         if ptr == 0:
             return None
         try:
-            # KAO entry = 48-byte RGB24 palette + AT4PX compressed tile data.
-            if ptr + 48 >= len(self._data):
-                return None
-            palette = self._data[ptr: ptr + 48]
-            raw = _decompress_at4px(self._data, ptr + 48)
-            if len(raw) < _PORTRAIT_BYTES:
-                return None
-            return _raw_to_image(raw[:_PORTRAIT_BYTES], palette)
+            # Variant A: pointer directly to AT4PX where decompressed payload
+            # contains [palette(32) + tile_data(800)].
+            if self._data[ptr: ptr + 5] == _AT4PX_MAGIC:
+                raw = _decompress_at4px(self._data, ptr)
+                if len(raw) >= (_PALETTE_BRG555_BYTES + _PORTRAIT_BYTES):
+                    palette = _palette_from_bgr555(raw[:_PALETTE_BRG555_BYTES])
+                    return _raw_to_image(
+                        raw[_PALETTE_BRG555_BYTES:_PALETTE_BRG555_BYTES + _PORTRAIT_BYTES],
+                        palette,
+                    )
+
+            # Variant B: [palette(48 RGB24)] + AT4PX(tile_data only).
+            at4px_ptr = ptr + _PALETTE_RGB24_BYTES
+            if self._data[at4px_ptr: at4px_ptr + 5] == _AT4PX_MAGIC:
+                raw = _decompress_at4px(self._data, at4px_ptr)
+                if len(raw) >= _PORTRAIT_BYTES:
+                    palette = _palette_from_rgb24(self._data[ptr: ptr + _PALETTE_RGB24_BYTES])
+                    return _raw_to_image(raw[:_PORTRAIT_BYTES], palette)
+
+            # Variant C: [palette(32 BGR555)] + AT4PX(tile_data only).
+            at4px_ptr = ptr + _PALETTE_BRG555_BYTES
+            if self._data[at4px_ptr: at4px_ptr + 5] == _AT4PX_MAGIC:
+                raw = _decompress_at4px(self._data, at4px_ptr)
+                if len(raw) >= _PORTRAIT_BYTES:
+                    palette = _palette_from_bgr555(self._data[ptr: ptr + _PALETTE_BRG555_BYTES])
+                    return _raw_to_image(raw[:_PORTRAIT_BYTES], palette)
+
+            return None
         except Exception:
             return None
