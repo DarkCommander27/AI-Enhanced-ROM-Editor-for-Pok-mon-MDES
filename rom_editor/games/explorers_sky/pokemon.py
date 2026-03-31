@@ -74,7 +74,7 @@ class PokemonEntry:
     recruit_rate1: int  # signed, 0 = cannot be recruited
     size: int           # body size (1=Tiny … 4=Huge)
     recruit_rate2: int  # secondary recruit flag
-    species_id: int = -1  # monster.md entity id; -1 means use index
+    species_id: int = -1  # raw monster.md entity id (metadata only)
 
     # Evolution fields (from monster.md, defaults for non-MD sources)
     pre_evo_index: int = 0
@@ -84,14 +84,14 @@ class PokemonEntry:
 
     @property
     def species_index(self) -> int:
-        return self.species_id if self.species_id >= 0 else self.index
+        # For this editor's list and portrait mapping, table index is the stable key.
+        return self.index
 
     @property
     def name(self) -> str:
-        sid = self.species_index
-        if 0 <= sid < len(POKEMON_NAMES):
-            return POKEMON_NAMES[sid]
-        return f"#{sid}"
+        if 0 <= self.index < len(POKEMON_NAMES):
+            return POKEMON_NAMES[self.index]
+        return f"#{self.index}"
 
     @property
     def type1_name(self) -> str:
