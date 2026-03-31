@@ -3,6 +3,39 @@
 import sys
 
 
+def _set_windows_dpi_awareness() -> None:
+    """Enable per-monitor DPI awareness on Windows before any Tk window is created.
+
+    Without this the OS bitmap-scales the window, producing a blurry UI on
+    HiDPI / 4K monitors.  The call is a no-op on non-Windows platforms.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        # SetProcessDpiAwareness(2) = PROCESS_PER_MONITOR_DPI_AWARE (Win 8.1+)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            # Fallback: SetProcessDPIAware() (Vista+)
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+def _set_appusermodelid() -> None:
+    """Set Windows taskbar / ALT+TAB app identity so the icon groups correctly."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "MDESRomEditor.ExplSkySuite.v1"
+        )
+    except Exception:
+        pass
+
+
 def _format_tkinter_install_help() -> str:
     """Return platform-specific instructions for installing tkinter."""
     if sys.platform.startswith("linux"):
@@ -26,6 +59,10 @@ def _format_tkinter_install_help() -> str:
 
 def main() -> None:
     """Launch the ROM editor application."""
+    # Windows-specific setup: must run before any Tk window is created.
+    _set_windows_dpi_awareness()
+    _set_appusermodelid()
+
     try:
         from rom_editor.ui.app import ROMEditorApp
     except ModuleNotFoundError as exc:

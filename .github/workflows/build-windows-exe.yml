@@ -24,12 +24,7 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
-          $iconArgs = @()
-          if (Test-Path "assets/app.ico") {
-            $iconArgs = @("--icon", "assets/app.ico")
-          }
-
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name MDES-ROM-Editor --version-file scripts/windows_version_info.txt @iconArgs main.py
+          python -m PyInstaller --noconfirm --clean MDES-ROM-Editor.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
