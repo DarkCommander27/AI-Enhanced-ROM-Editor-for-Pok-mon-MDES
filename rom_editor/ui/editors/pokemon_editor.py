@@ -107,6 +107,8 @@ class PokemonEditorTab(ttk.Frame):
         self._picker_lookup = {}
         for pos, entry in enumerate(table):
             label = f"#{entry.index:03d} {entry.name}"
+            if entry.species_index != entry.index:
+                label += f" [species {entry.species_index:03d}]"
             self._listbox.insert(tk.END, label)
             self._picker_options.append(label)
             self._picker_lookup[label] = entry.index
@@ -385,6 +387,8 @@ class PokemonEditorTab(ttk.Frame):
         pos = 0
         for entry in self._table:
             label = f"#{entry.index:03d} {entry.name}"
+            if entry.species_index != entry.index:
+                label += f" [species {entry.species_index:03d}]"
             if query in label.lower():
                 self._listbox.insert(tk.END, label)
                 self._colorize_item(pos, entry)
@@ -503,7 +507,7 @@ class PokemonEditorTab(ttk.Frame):
             return
         emotion = self._sprite_viewer.get_emotion()
         img = self._portrait_container.get_portrait(
-            self._current_entry.index, emotion
+            self._current_entry.species_index, emotion
         )
         self._sprite_viewer.set_portrait(img)
 

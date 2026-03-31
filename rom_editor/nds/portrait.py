@@ -24,18 +24,20 @@ Decompressed portrait (832 bytes)
 from __future__ import annotations
 
 import struct
-from typing import Optional
+from typing import Any, Optional
 
 try:
     from PIL import Image
     _HAS_PIL = True
 except ImportError:  # pragma: no cover
+    Image = None  # type: ignore[assignment]
     _HAS_PIL = False
 
 try:
     from skytemple_files.graphics.kao.handler import KaoHandler
     _HAS_SKYTEMPLE_KAO = True
 except Exception:  # pragma: no cover
+    KaoHandler = None  # type: ignore[assignment]
     _HAS_SKYTEMPLE_KAO = False
 
 # ---------------------------------------------------------------------------
@@ -163,12 +165,14 @@ def _palette_from_bgr555(palette_bytes: bytes) -> list[tuple[int, int, int]]:
     return palette
 
 
-def _raw_to_image(raw: bytes, palette: list[tuple[int, int, int]]) -> "Image.Image":
+def _raw_to_image(raw: bytes, palette: list[tuple[int, int, int]]) -> Any:
     """Convert decompressed 4bpp tiles + palette into a 40×40 image."""
+    assert Image is not None
 
     # Assemble 5×5 tile grid → 40×40 image
     img = Image.new("RGB", (40, 40))
-    px  = img.load()    # type: ignore[assignment]
+    px = img.load()
+    assert px is not None
     tile_data = raw
 
     for t in range(25):
@@ -214,7 +218,7 @@ class PortraitContainer:
                 f"kaomado too short: {len(data)} < {self._table_bytes}"
             )
 
-        if _HAS_SKYTEMPLE_KAO:
+        if _HAS_SKYTEMPLE_KAO and KaoHandler is not None:
             try:
                 self._kao = KaoHandler.deserialize(data)
                 # Prefer SkyTemple model metadata when available.
@@ -255,11 +259,20 @@ class PortraitContainer:
         """Return ``True`` if a portrait exists for this combination."""
         return self._ptr(poke_idx, emotion) != 0
 
+    def has_precise_decoder(self) -> bool:
+        """Return True when SkyTemple-based portrait decoding is available."""
+        return self._kao is not None
+
     def get_portrait(
         self, poke_idx: int, emotion: int = 0
-    ) -> Optional["Image.Image"]:
+    ) -> Optional[Any]:
         """Return a 40×40 PIL Image for *poke_idx* / *emotion*, or ``None``."""
         if not _HAS_PIL:
+            return None
+
+        # Legacy decoding can produce visually incorrect portraits on some ROMs.
+        # If SkyTemple decoding is unavailable, prefer no portrait over corrupt output.
+        if self._kao is None:
             return None
 
         # Primary path: use the SkyTemple KAO implementation (accurate format handling).

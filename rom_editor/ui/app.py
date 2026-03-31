@@ -79,7 +79,7 @@ class ROMEditorApp(tk.Tk):
         self._simple_mode = tk.BooleanVar(value=False)
         self._focus_assist = tk.BooleanVar(value=False)
         self._neuro_mode = tk.BooleanVar(
-            value=self._get_setting_bool("neuro_mode", default=True)
+            value=self._get_setting_bool("neuro_mode", default=False)
         )
         self._portrait_container = None
 
@@ -520,6 +520,10 @@ class ROMEditorApp(tk.Tk):
         # Help menu
         self._help_menu = tk.Menu(self._menubar, tearoff=False)
         self._help_menu.add_command(label="About", command=self._show_about)
+        self._help_menu.add_command(
+            label="Where Are The Buttons?",
+            command=self._show_button_guide,
+        )
         self._help_menu.add_command(label="Configure OpenAI API Key…",
                                     command=self._configure_api_key)
         self._menubar.add_cascade(label="Help", menu=self._help_menu)
@@ -539,10 +543,10 @@ class ROMEditorApp(tk.Tk):
         ttk.Button(left, text="Save ROM", command=self._save_rom, style="Accent.TButton").pack(
             side="left", padx=(0, 18))
 
-        self._mode_btn = ttk.Button(left, text="Simple Mode", command=self._toggle_mode)
+        self._mode_btn = ttk.Button(left, text="Mode: Advanced", command=self._toggle_mode)
         self._mode_btn.pack(side="left", padx=(0, 8))
 
-        self._neuro_btn = ttk.Button(left, text="Neuro Mode: On", command=self._toggle_neuro_mode)
+        self._neuro_btn = ttk.Button(left, text="Neuro Mode: Off", command=self._toggle_neuro_mode)
         self._neuro_btn.pack(side="left", padx=(0, 8))
 
         self._focus_btn = ttk.Button(left, text="Focus Assist: Off", command=self._toggle_focus_assist)
@@ -862,6 +866,10 @@ class ROMEditorApp(tk.Tk):
                     rom.read_file(PORTRAIT_DATA)
                 )
                 self._pokemon_editor.set_portrait_container(self._portrait_container)
+                if not self._portrait_container.has_precise_decoder():
+                    self._status(
+                        "Portrait preview disabled: install 'skytemple-files' for accurate portraits."
+                    )
             except Exception as exc:
                 self._status(f"Portraits unavailable: {exc}")
 
@@ -1098,7 +1106,7 @@ class ROMEditorApp(tk.Tk):
     def _toggle_mode(self) -> None:
         simple = not self._simple_mode.get()
         self._simple_mode.set(simple)
-        label = "Advanced Mode" if simple else "Simple Mode"
+        label = "Mode: Simple" if simple else "Mode: Advanced"
         self._mode_btn.configure(text=label)
         self._pokemon_editor.set_simple_mode(simple)
         self._move_editor.set_simple_mode(simple)
@@ -1168,6 +1176,11 @@ class ROMEditorApp(tk.Tk):
             )
             return
         if not self._history.has_undo():
+            if self._simple_mode.get():
+                self._guide_var.set(
+                    "Step 2: You are in Simple mode. Switch to Mode: Advanced to see all editing controls."
+                )
+                return
             self._guide_var.set(
                 "Step 2: Select a Pokémon, move, or dungeon entry and edit one field at a time."
             )
@@ -1373,6 +1386,29 @@ class ROMEditorApp(tk.Tk):
 
         ttk.Button(dlg, text="Save", command=save).grid(
             row=2, column=0, columnspan=2, pady=8)
+
+    def _show_button_guide(self) -> None:
+        messagebox.showinfo(
+            "Where Are The Buttons?",
+            "Main:\n"
+            "- Open ROM / Save ROM (top toolbar)\n"
+            "- Mode: Advanced/Simple (top toolbar)\n"
+            "- Neuro Mode and Focus Assist (top toolbar)\n\n"
+            "Pokemon Stats tab:\n"
+            "- Apply Changes\n"
+            "- Evolution fields are in Advanced mode\n\n"
+            "Moves tab:\n"
+            "- Apply Changes\n\n"
+            "Movepools (Learnsets) tab:\n"
+            "- Add / Update / Remove\n"
+            "- Move Up / Move Down\n"
+            "- Apply Learnset / Reload Entry\n\n"
+            "Dungeons tab:\n"
+            "- Create Custom from Selected\n"
+            "- Apply Changes\n\n"
+            "Text (Raw) tab:\n"
+            "- Apply to File / Revert File",
+        )
 
     def _show_about(self) -> None:
         messagebox.showinfo(

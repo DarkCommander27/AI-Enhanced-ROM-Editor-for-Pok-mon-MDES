@@ -74,6 +74,7 @@ class PokemonEntry:
     recruit_rate1: int  # signed, 0 = cannot be recruited
     size: int           # body size (1=Tiny … 4=Huge)
     recruit_rate2: int  # secondary recruit flag
+    species_id: int = -1  # monster.md entity id; -1 means use index
 
     # Evolution fields (from monster.md, defaults for non-MD sources)
     pre_evo_index: int = 0
@@ -82,10 +83,15 @@ class PokemonEntry:
     evo_param2: int = 0
 
     @property
+    def species_index(self) -> int:
+        return self.species_id if self.species_id >= 0 else self.index
+
+    @property
     def name(self) -> str:
-        if 0 <= self.index < len(POKEMON_NAMES):
-            return POKEMON_NAMES[self.index]
-        return f"#{self.index}"
+        sid = self.species_index
+        if 0 <= sid < len(POKEMON_NAMES):
+            return POKEMON_NAMES[sid]
+        return f"#{sid}"
 
     @property
     def type1_name(self) -> str:
@@ -200,6 +206,8 @@ class PokemonTable:
     def __init__(self, entries: list[PokemonEntry], source_format: str = "narc") -> None:
         self._entries = entries
         self.source_format = source_format
+        self._md_blob: Optional[bytearray] = None
+        self._md_count: int = 0
 
     # ------------------------------------------------------------------
     # Constructors
@@ -246,6 +254,7 @@ class PokemonTable:
             chunk = data[off: off + _MD_ENTRY_SIZE]
 
             # Layout follows ppmd's PokeMonsterData (EoS, 68 bytes).
+            species_id = struct.unpack_from("<H", chunk, 0)[0]
             pre_evo_index = struct.unpack_from("<H", chunk, 8)[0]
             evo_method = struct.unpack_from("<H", chunk, 10)[0]
             evo_param1 = struct.unpack_from("<H", chunk, 12)[0]
@@ -285,6 +294,7 @@ class PokemonTable:
                 recruit_rate1=recruit_rate1,
                 size=max(1, min(4, size)),
                 recruit_rate2=recruit_rate2,
+                species_id=species_id,
                 pre_evo_index=pre_evo_index,
                 evo_method=evo_method,
                 evo_param1=evo_param1,
@@ -340,11 +350,11 @@ class PokemonTable:
 
     def to_md_bytes(self) -> bytes:
         """Serialize edited values back into the original monster.md buffer."""
-        if not hasattr(self, "_md_blob"):
+        if self._md_blob is None:
             raise ValueError("MD source blob unavailable for serialization")
 
         blob = bytearray(self._md_blob)
-        count = getattr(self, "_md_count", len(self._entries))
+        count = self._md_count if self._md_count > 0 else len(self._entries)
         for entry in self._entries:
             if not (0 <= entry.index < count):
                 continue
